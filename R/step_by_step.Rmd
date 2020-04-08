@@ -1,0 +1,102 @@
+---
+title: "Results check"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("EpiProgInf.r")
+source("makebetas.R")
+```
+
+## Generate data
+
+```{r}
+n.sims <- 1
+ n.epis <- 10
+
+ fs <- matrix(nrow=n.epis, ncol=n.sims)
+ pcts <- matrix(nrow=n.epis, ncol=n.sims)
+
+ K.VC_linear <- fs
+ K.VC_rpart <- fs
+ K.VC_super <- fs
+ K.norm_linear <-fs
+ K.norm_rpart <-fs
+ K.norm_super <- fs
+ K.VC_alone <- fs
+ K.norm_alone <- fs
+ K.linear_alone <- fs
+ K.rpart_alone <- fs
+ K.super_alone <- fs
+
+ for (i in 1:n.sims) {
+
+   cat("iteration ", i, "\n")
+
+  pcts[,i] <- runif(n.epis, 0.05,1)
+
+  x <- runif(n.epis, 0, 1)
+  beta <- 0.4 * exp(x)
+
+  gamma <- .33
+  pop_sz <- rnbinom(n.epis, mu=5000, size=20)
+
+  ecs <- gen.epidemic.curves.SIR(pcts[,i], beta,pop_sz, gamma)
+
+
+  ## Need to decompose ecs into ecs and true final sizes
+  fs[,i] <- ecs$fs
+  ecs <- ecs$ecs
+ }
+ fs
+```
+
+## Step 1: initialize K 
+Set K = 2 times sum of currently observed cases
+
+```{r}
+
+dat <- data.frame(K=2*sapply(ecs,sum), pop_sz=pop_sz,
+                    x=x)
+
+
+
+```
+
+## Step 2: Fit stat model
+
+```{r}
+stat_fit <- stat.mdl.linear.fit(dat)
+stat_res <- stat.mdl.linear.pred(stat_fit)
+stat_res
+```
+
+## Step 3: Fit VC model
+
+```{r}
+VC_fit <- epi.mdl.ViboudChowell.fit2(ecs, stat_res, prev.mdl = NULL)
+VC_res <- epi.mdl.ViboudChowell.pred2(VC_fit)
+VC_res
+```
+
+## Now iterate: fit VC with linear model
+
+```{r}
+
+ for (i in 1:n.sims) {
+dat <- data.frame(K=2*sapply(ecs,sum), pop_sz=pop_sz,
+                    x=x)
+
+  K.VC_linear[,i] <- epiInf.EM(ecs, dat,
+                               stat.mdl.linear.fit,
+                               epi.mdl.ViboudChowell.fit2,
+                               stat.mdl.linear.pred,
+                               epi.mdl.ViboudChowell.pred2,
+                               threshold = 1)$K
+ }
+
+K.VC_linear
+```
