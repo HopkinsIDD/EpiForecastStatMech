@@ -19,6 +19,7 @@ tfb = tfp.bijectors
 
 from .intensity_family import IntensityFamily
 from .tf_common import *
+from . import soft_laplace
 
 
 # Process mcmc output helpers
@@ -447,7 +448,7 @@ def do_single_bic_run(intensity_family,
     verbosity: (int) Prints some at >=1, lots at >= 2.
     bic_multiplier: (default 1.) optional overall bic scaling correction
     fudge_scale:  (default 100.) controls the extent of the quadratic part. see
-      alpha_neg_loss
+      alpha_loss
 
   Returns:
     @@
@@ -482,12 +483,12 @@ def do_single_bic_run(intensity_family,
     combo_params = unravel_combo_params(combo_params_flat)
     (intercept, alpha, mech_params_raw) = combo_params
     alpha_scaled = tf_v_col_sd * alpha  # / something about mech_params_stack?
-    # morally, alpha_neg_loss is the negative absolute values of alpha_scaled,
+    # morally, alpha_loss is the absolute value of alpha_scaled,
     # but it's approx. quadratic from 0. to O(1. / fudge_scale.)
-    alpha_neg_loss = -e_half_loss(fudge_scale * alpha_scaled) / fudge_scale
+    alpha_loss = soft_laplace.e_half_loss(fudge_scale * alpha_scaled) / fudge_scale
     # shape: (out_dim,)
-    scaled_alpha_neg_loss_per_out = (
-        tf.reduce_sum(alpha_neg_loss, axis=0) * penalty_scale)
+    scaled_alpha_loss_per_out = (
+        tf.reduce_sum(alpha_loss, axis=0) * penalty_scale)
     # The "Degrees of Freedom of the Lasso" paper asserts that the number of
     # non-zero coefficients (not including intercept) is (an unbiased estimate of)
     # the degrees of freedom of the fitter.
@@ -502,7 +503,7 @@ def do_single_bic_run(intensity_family,
     stat_log_prob = gaussian_logprob_with_bottom_scale_along_axis0(
         mech_params_stack - mech_params_hat_stack, mech_bottom_scale)
     # shape: (out_dim,)
-    penalized_stat_log_prob = stat_log_prob + scaled_alpha_neg_loss_per_out
+    penalized_stat_log_prob = stat_log_prob - scaled_alpha_loss_per_out
     # scalar
     penalized_log_prob = tf.reduce_sum(penalized_stat_log_prob) + mech_log_prob
     # stat_bic (without the -2 scale, so big is good) -- i.e. just the base Laplace approx.
@@ -519,6 +520,10 @@ def do_single_bic_run(intensity_family,
     combo_result = combo_logprob_and_bic(combo_params_flat)
     return -combo_result.penalized_log_prob
 
+  #@@@@@ WARNING: The code fails locally for me with the @tf.function decorator in place.
+  # Removing @tf.function makes the code much slower, but seems to also improve debug errors which otherwise report
+  # 'builtin_function_or_method' object has no attribute '__code__'.
+  # I'm going to leave it in to see if the problem reproduces.
   @tf.function
   def val_and_grad_combo_loss(x):
     with tf.GradientTape() as tape:
