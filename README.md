@@ -1,2 +1,2 @@
 # EpiForecastStatMech
-Exploring methods for merging mechanistic and statistcal models to forecast epidemics.
+Exploring methods for merging mechanistic and statistical models to forecast epidemics.
