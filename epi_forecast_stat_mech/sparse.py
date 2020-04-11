@@ -19,6 +19,7 @@ tfb = tfp.bijectors
 
 from .intensity_family import IntensityFamily
 from .tf_common import *
+from .flatten_util import ravel_pytree
 from . import soft_laplace
 
 
@@ -38,51 +39,6 @@ def tall_version(df):
   tall_df = pd.DataFrame(tall_df).reset_index()
   return tall_df
 
-"""### ravel_pytree for tf"""
-
-# Implement a tf-compatible ravel_pytree, similar to jax.flatten_util.ravel_pytree.
-# Built off of jax's tree_util.
-import functools
-from jax import tree_util
-
-
-def slice_and_reshape(offset, next_offset, new_shape, flat):
-  # print(offset, next_offset, new_shape)
-  return tf.reshape(flat[offset:next_offset], new_shape)
-
-
-def make_flat_and_unravel_list(leaves):
-  flat_accum = []
-  unravel_accum = []
-  offset = 0
-  for leaf in leaves:
-    flat_leaf = tf.reshape(leaf, (-1,))
-    flat_accum.append(flat_leaf)
-    leaf_shape = tuple(leaf.shape.as_list())
-    next_offset = offset + flat_leaf.shape.as_list()[0]
-    # print(offset, next_offset, leaf_shape)
-    # This doesn't work because closures only use the named object in this namespace
-    # In particular, offset and so on keep changing.
-    # unravel_accum.append(lambda flat: tf.reshape(flat[offset:next_offset], leaf_shape))
-    # This works.
-    unravel_accum.append(
-        functools.partial(slice_and_reshape, offset, next_offset, leaf_shape))
-    offset = next_offset
-
-  def unravel_list(flat):
-    accum = []
-    for unravel in unravel_accum:
-      accum.append(unravel(flat))
-    return accum
-
-  return tf.concat(flat_accum, axis=0), unravel_list
-
-
-def ravel_pytree(pytree):
-  leaves, treedef = tree_util.tree_flatten(pytree)
-  flat, unravel_list = make_flat_and_unravel_list(leaves)
-  unravel_pytree = lambda flat: treedef.unflatten(unravel_list(flat))
-  return flat, unravel_pytree
 
 """### Log-probs to model residuals at "plugin" scales."""
 
@@ -431,8 +387,28 @@ def do_single_bic_run(intensity_family,
                       verbosity=1,
                       bic_multiplier=1.,
                       fudge_scale=100.):
-  """@@
+  """Find a sparseness penalized alpha and bic score it.
 
+  Note about the BIC calculations:
+    The usual BIC formula is -2 * log_lik(theta_hat) + log(sample_size) * number_of_parameters.
+    It is derived as using the Laplace approximation to the log of the predictive probability
+    of the data (specifically, the log of the integral of the Likelihood against an improper
+    flat prior) and and then multiplying by -2 (c.f. "deviance").
+    
+    Here, we *reject convention* and define the bic without the -2, so that it is an approximation
+    of the log predictive probability, full stop. Accordingly, it is:
+      log_lik(theta_hat) - log(sample_size) / 2 * number_of_parameters.
+    Accordingly, big bic values are good here.
+    A refinement would be to use the log_posterior in place of the log_lik. I.e. log_lik(theta) + log_prior(theta).
+    And use the MAP for theta_hat. This is more or less what's done here. Except, not exactly. The
+    LASSO inspired penalized log-likelihood is kind of like a log_posterior, but not exactly. This
+    criterion is used to find the "MAP", when you view the penalty_scale as fixed and known. But when
+    the bic criterion is computed we're currently only using the loglikelihood at this alpha_hat.
+    
+    Furthermore, how do we arrive at "k"? We do not use the full size of alpha. We are inspired by 
+    "On the “degrees of freedom” of the lasso" https://projecteuclid.org/euclid.aos/1194461726
+    Zou, Hastie, Tibshirani (see also the "IDEA" paper supplement https://www.embopress.org/doi/pdf/10.15252/msb.20199174).
+    So the degrees of freedom is the number of non-zero elements of alpha.
   Definitions:
     out_dim = len(intensity_family.encoded_param_names)
     in_dim = len(t.v) for any t in trajectories.
@@ -451,14 +427,18 @@ def do_single_bic_run(intensity_family,
       alpha_loss
 
   Returns:
-    @@
+    BICRunSummary
   """
   trajectories_index = pd.Index([t.unique_id for t in trajectories],
                                 name='unique_id')
   # the covariates.
   v_df = pd.DataFrame(
       np.stack([t.v for t in trajectories]), index=trajectories_index)
-  tf_v = tf_float(v_df.values)
+  tf_v_orig = tf_float(v_df.values)
+  tf_v_means = tf.reduce_mean(tf_v_orig, axis=0, keepdims=True)
+  # The centered version simply called tf_v. Internally, we'll use this as "X",
+  # But in the final report we'll switch back to tf_v_orig as "X".
+  tf_v = tf_v_orig - tf_v_means
   tf_v_col_sd = tf.reshape(tf_float(v_df.std(axis=0, ddof=1)), (-1, 1))
 
   out_dim = len(intensity_family.encoded_param_names)
@@ -520,10 +500,6 @@ def do_single_bic_run(intensity_family,
     combo_result = combo_logprob_and_bic(combo_params_flat)
     return -combo_result.penalized_log_prob
 
-  #@@@@@ WARNING: The code fails locally for me with the @tf.function decorator in place.
-  # Removing @tf.function makes the code much slower, but seems to also improve debug errors which otherwise report
-  # 'builtin_function_or_method' object has no attribute '__code__'.
-  # I'm going to leave it in to see if the problem reproduces.
   @tf.function
   def val_and_grad_combo_loss(x):
     with tf.GradientTape() as tape:
@@ -557,12 +533,25 @@ def do_single_bic_run(intensity_family,
   if verbosity >= 2:
     print(opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
 
+  # This is the fitted linear model for "X" == tf_v.
   (intercept, alpha, mech_params_raw) = combo_params
+  # To correct for centering, i.e. compute the linear model for "X" == tf_v_orig
+  # We reason as follows:
+  #  intercept + tf.matmul(tf_v, alpha) ==
+  #  intercept + tf.matmul(tf_v_orig - tf_v_means, alpha) == 
+  #  (intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)) + tf.matmul(tf_v_orig, alpha)
+  # So defining:
+  #   final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)
+  # restores the linear model form for "X" == tf_v_orig.
+    
+  final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)
+  final_combo_params = ComboParams(final_intercept, alpha, mech_params_raw)
+
   if verbosity >= 2:
     mech_params = [
         intensity_family.params_wrapper().reset(x) for x in mech_params_raw
     ]
-    print(intercept, alpha)
+    print(final_intercept, alpha)
     for mp in mech_params:
       print(mp)
 
@@ -571,12 +560,17 @@ def do_single_bic_run(intensity_family,
   mech_params_stack = tf.stack(mech_params_raw)
   mech_params_hat_stack = intercept + tf.matmul(tf_v, alpha)
 
+  # Sanity check:
+  mech_params_hat_stack2 = final_intercept + tf.matmul(tf_v_orig, alpha)
+  abs_err_check = np.max(np.abs(np_float(mech_params_hat_stack) - np_float(mech_params_hat_stack2)))
+  assert abs_err_check < 1E-6, 'Centering associated problem.'
+
   if verbosity >= 1:
     print(
         float(combo_result.combined_bic), np_float(penalty_scale),
         np_float(combo_result.stat_bic), np_float(combo_result.mech_log_prob))
 
-  return BICRunSummary(combo_result, combo_params, mech_params_stack,
+  return BICRunSummary(combo_result, final_combo_params, mech_params_stack,
                        mech_params_hat_stack, intensity_family, penalty_scale)
 
 def summarize_mech_param_fits(run1):
