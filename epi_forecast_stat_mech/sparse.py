@@ -458,7 +458,11 @@ def do_single_bic_run(intensity_family,
   # the covariates.
   v_df = pd.DataFrame(
       np.stack([t.v for t in trajectories]), index=trajectories_index)
-  tf_v = tf_float(v_df.values)
+  tf_v_orig = tf_float(v_df.values)
+  tf_v_means = tf.reduce_mean(tf_v_orig, axis=0, keepdims=True)
+  # The centered version simply called tf_v. Internally, we'll use this as "X",
+  # But in the final report we'll switch back to tf_v_orig as "X".
+  tf_v = tf_v_orig - tf_v_means
   tf_v_col_sd = tf.reshape(tf_float(v_df.std(axis=0, ddof=1)), (-1, 1))
 
   out_dim = len(intensity_family.encoded_param_names)
@@ -520,10 +524,6 @@ def do_single_bic_run(intensity_family,
     combo_result = combo_logprob_and_bic(combo_params_flat)
     return -combo_result.penalized_log_prob
 
-  #@@@@@ WARNING: The code fails locally for me with the @tf.function decorator in place.
-  # Removing @tf.function makes the code much slower, but seems to also improve debug errors which otherwise report
-  # 'builtin_function_or_method' object has no attribute '__code__'.
-  # I'm going to leave it in to see if the problem reproduces.
   @tf.function
   def val_and_grad_combo_loss(x):
     with tf.GradientTape() as tape:
@@ -557,12 +557,25 @@ def do_single_bic_run(intensity_family,
   if verbosity >= 2:
     print(opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
 
+  # This is the fitted linear model for "X" == tf_v.
   (intercept, alpha, mech_params_raw) = combo_params
+  # To correct for centering, i.e. compute the linear model for "X" == tf_v_orig
+  # We reason as follows:
+  #  intercept + tf.matmul(tf_v, alpha) ==
+  #  intercept + tf.matmul(tf_v_orig - tf_v_means, alpha) == 
+  #  (intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)) + tf.matmul(tf_v_orig, alpha)
+  # So defining:
+  #   final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)
+  # restores the linear model form for "X" == tf_v_orig.
+    
+  final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)
+  final_combo_params = ComboParams(final_intercept, alpha, mech_params_raw)
+
   if verbosity >= 2:
     mech_params = [
         intensity_family.params_wrapper().reset(x) for x in mech_params_raw
     ]
-    print(intercept, alpha)
+    print(final_intercept, alpha)
     for mp in mech_params:
       print(mp)
 
@@ -571,12 +584,17 @@ def do_single_bic_run(intensity_family,
   mech_params_stack = tf.stack(mech_params_raw)
   mech_params_hat_stack = intercept + tf.matmul(tf_v, alpha)
 
+  # Sanity check:
+  mech_params_hat_stack2 = final_intercept + tf.matmul(tf_v_orig, alpha)
+  abs_err_check = np.max(np.abs(np_float(mech_params_hat_stack) - np_float(mech_params_hat_stack2)))
+  assert abs_err_check < 1E-6, 'Centering associated problem.'
+
   if verbosity >= 1:
     print(
         float(combo_result.combined_bic), np_float(penalty_scale),
         np_float(combo_result.stat_bic), np_float(combo_result.mech_log_prob))
 
-  return BICRunSummary(combo_result, combo_params, mech_params_stack,
+  return BICRunSummary(combo_result, final_combo_params, mech_params_stack,
                        mech_params_hat_stack, intensity_family, penalty_scale)
 
 def summarize_mech_param_fits(run1):
