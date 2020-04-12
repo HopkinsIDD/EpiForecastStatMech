@@ -1,8 +1,6 @@
 """# Data Simulation
-(from [edklein's Colab](https://colab.sandbox.google.com/drive/1jFozxrQeOmvxfnqzv7q-CUdD5Yqh5Hnj#scrollTo=yOJ3cS758hOT))
-(last copied 20200406 12pm PST)
 
-# Discrete SIR Model
+# SIR Model with single time dependent covariate
 
 Write a function that generates a single discrete time SIR model.
 """
@@ -40,7 +38,11 @@ disease_trajectory = collections.namedtuple(
         'estimated_infections',
         'ground_truth_infections_over_time',
         'total_infections',
-        'v',
+        'v_static',
+        'alpha_static',
+        'v_dynamic_total',
+        'v_dynamic_observed',
+        'beta_dynamic_observed',
         'alpha',
         'metadata',
         #@@hack
@@ -66,10 +68,15 @@ total_infections: an int representing the ground truth number of total
 infections
 total_infections: an int representing the total *ground truth* number of
 infections
-v: a np.array of shape (num_covariates,) and type float
+v_static: a np.array of shape (num_covariates,) and type float
 representing the covariates used for each epidemic
+v_dynamic_total: a pd.DataFrame repreenting the single time-dependent covariate 
+    at each point in time for the *whole* epidemic (ground-truth).
+v_dynamic_observed: a pd.DataFrame repreenting the single time-dependent covariate 
+    at each *observed* point in time.
+beta_dynamic_observed: a pd.DataFrame representing the time-dependent growth rate
 alpha: a np.array of shape (num_covariates,) and type float representing the
-weights of each covariate
+weights of each static covariate
 meta_data: a named tuple of type meta_data
 t: a np.array of shape (T,) representing the simulation time of each point in
 the epidemic
@@ -81,18 +88,23 @@ ground_truth_cumulative_infections_over_time: a np.array representing the
 "non-predictive" cumsum of the ground truth simulation
 """
 
-def generate_ground_truth_SIR_curve(pop_size, beta, gamma):
+def generate_ground_truth_SIR_curve(pop_size, beta, gamma, intervention_num_infections=50):
   """
   A function that generates a single epidemic curve through time.
   We assume that the epidemic starts with a single case at time 0.  
   Simulates the number of infected individuals as a function of time, until the 
   number of infected individuals is 0. This is the epidemic curve.
   Returns the epidemic curves as a function of time.
+  
+  **NEW** - when we reach the intervention_num_infections, we turn on an intervention
+  that decrements beta by some randomly generated weight.
 
   Args:
     pop_size: an int representing the population size
-    beta: a float representing the growth rate of the disease
+    beta: a float representing the *static* growth rate of the disease
     gamma: a float representing the recovery rate of the disease
+    intervention_num_infections: an int representing the number of infections
+        when we turn on an 'intervention' that decreases the growth rate.
   
   Returns:
     list_of_new_infections: a np.array of shape (T,) representing the ground
@@ -101,8 +113,14 @@ def generate_ground_truth_SIR_curve(pop_size, beta, gamma):
   num_infected = 1 # always start with one infection at time 0
   num_recovered = 0
   num_susceptible = int(pop_size - num_infected - num_recovered)
+    
+  ##@@hack
+  #TODO: do better
+  intervention_weight = 0.
 
   list_of_new_infections = np.array([num_infected])
+  list_of_betas = np.array([beta])
+  list_of_td_cov = np.array([0])
 
   #While there are still infected people
   while num_infected > 0: 
@@ -124,6 +142,14 @@ def generate_ground_truth_SIR_curve(pop_size, beta, gamma):
 
     #Record the number of infections that occured at this time point
     list_of_new_infections = np.append(list_of_new_infections, num_new_infections)
+    list_of_betas = np.append(list_of_betas, beta)
+    list_of_td_cov = np.append(list_of_td_cov, not(intervention_weight==0))
+    
+    #update beta for next iteration?
+    if np.cumsum(list_of_new_infections) > intervention_num_infections and intervention_weight == 0:
+        #TODO: make this a function that gets passed in
+        intervention_weight = 0.4*np.exp(np.random.uniform(0.0, 1.0))
+        beta -= intervention_weight
 
     #update counts for next iteration
     #sum of all counts is constant and equal to population size
@@ -131,9 +157,9 @@ def generate_ground_truth_SIR_curve(pop_size, beta, gamma):
     num_recovered += num_new_recoveries
     num_susceptible -= num_new_infections
 
-  return list_of_new_infections
+  return list_of_new_infections, list_of_betas, list_of_td_cov
 
-def generate_observed_SIR_curves(percent_infected, pop_size, beta, gamma):
+def generate_observed_SIR_curves(percent_infected, pop_size, beta, gamma, intervention_num_infections=50):
   """
   Generate the epidemic curve observed to date using the SIR model.
 
@@ -159,7 +185,7 @@ def generate_observed_SIR_curves(percent_infected, pop_size, beta, gamma):
   count = 0
     
   while total_infections < 10 and count<5000:
-    ground_truth_infections = generate_ground_truth_SIR_curve(pop_size, beta, gamma)
+    ground_truth_infections, list_of_betas, list_of_td_cov = generate_ground_truth_SIR_curve(pop_size, beta, gamma, intervention_num_infections)
     total_infections = np.sum(ground_truth_infections)
     count += 1
 
@@ -174,6 +200,13 @@ def generate_observed_SIR_curves(percent_infected, pop_size, beta, gamma):
   # Save list of infected individuals up until we reach the target_size
   # This is the 'history' of the epidemic up until the current time
   observed_infections = ground_truth_infections[:current_time]
+
+  list_of_observed_betas = list_of_betas([:current_time])
+  list_of_observed_td_cov = list_of_td_cov([:current_time])
+
+  #TODO:
+  #Put these into a DF that gets passed to the other function
+  # then save this DF into the disease_trajectory
 
   return observed_infections, ground_truth_infections
 
@@ -235,7 +268,7 @@ def generate_SIR_simulations(gen_beta_fn, beta_gen_parameters, num_simulations,
                               estimated_infections=estimated_infections,
                               ground_truth_infections_over_time=ground_truth_infections,
                               total_infections=total_infections, 
-                              v = v, 
+                              v_static = v, 
                               alpha = alpha, 
                               metadata=md,
                               t=t,
