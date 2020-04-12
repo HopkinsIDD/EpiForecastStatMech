@@ -198,34 +198,30 @@ def generate_SIR_simulations(gen_beta_fn, beta_gen_parameters, num_simulations,
   Returns:
     list_of_disease_trajectory: a list of disease_trajectory named tuples
   """
-  list_of_meta_data = [] 
   list_of_disease_trajectory = [] 
 
-  # generate growth rate for all simulations,
-  # this is constant between simulations 
-  beta, v, alpha = gen_beta_fn(*beta_gen_parameters)
-
-  # randomly generate the percentage of infected people for each epidemic
-  # this is constant between simulations
-  percent_infected = np.random.uniform(0.05, 1.0, num_epidemics)
-  
-  # generate meta data for each epidemic
-  # TODO: do better
-  for i in range(num_epidemics):
-    md = meta_data(num_epidemics, i, const_estimate_of_total, percent_infected[i],
-                   constant_pop_size, beta[i], constant_gamma)
-    # I guess technically v and alpha should be in meta data...
-    list_of_meta_data.append(md)
-
   unique_id = 0
+  
   for j in range(num_simulations):
     for k in range(num_epidemics):
-      observed_infections, ground_truth_infections = generate_observed_SIR_curves(*list_of_meta_data[k][3:])
-      estimated_infections = np.sum(observed_infections)/list_of_meta_data[k].frac_estimate_of_total
+      # generate growth rate for all simulations,
+      # this is constant between simulations 
+      beta, v, alpha = gen_beta_fn(*beta_gen_parameters)
+
+      # randomly generate the percentage of infected people for each epidemic
+      # this is constant between simulations
+      percent_infected = np.random.uniform(0.05, 1.0)
+
+      # generate meta data for this epidemic
+      md = meta_data(num_epidemics, k, const_estimate_of_total, percent_infected, constant_pop_size, beta, constant_gamma)
+
+      observed_infections, ground_truth_infections = generate_observed_SIR_curves(*md[3:])
+      estimated_infections = np.sum(observed_infections)/md.frac_estimate_of_total
       total_infections = np.sum(ground_truth_infections)
 
       t = np.arange(len(observed_infections))
       ground_truth_t = np.arange(len(ground_truth_infections))
+      
       # previous day cumsums
       cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], observed_infections)))[:-1]
       ground_truth_cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], ground_truth_infections)))[:-1]
@@ -239,13 +235,13 @@ def generate_SIR_simulations(gen_beta_fn, beta_gen_parameters, num_simulations,
                               estimated_infections=estimated_infections,
                               ground_truth_infections_over_time=ground_truth_infections,
                               total_infections=total_infections, 
-                              v = v[:, k], 
+                              v = v, 
                               alpha = alpha, 
-                              metadata=list_of_meta_data[k],
+                              metadata=md,
                               t=t,
                               ground_truth_t = ground_truth_t,
                               cumulative_infections_over_time=cumulative_infections_over_time,
-                              ground_truth_cumulative_infections_over_time=ground_truth_cumulative_infections_over_time)
+                    ground_truth_cumulative_infections_over_time=ground_truth_cumulative_infections_over_time)
       list_of_disease_trajectory.append(dt)
       unique_id += 1
   
@@ -256,54 +252,51 @@ def generate_SIR_simulations(gen_beta_fn, beta_gen_parameters, num_simulations,
 Three different ways of generating betas, depending on covariates
 """
 
-def generate_betas_from_single_random_covariate(num_epidemics):
+def generate_betas_from_single_random_covariate():
   """
   Betas depend on a single covariate that is randomly generated for each epidemic
 
   Args:
-    num_epidemics: an int representing the number of epidemics to simulate
+    None
   Returns:
-    beta: a np.array of shape (num_epidemics,) consisting of the growth rate for each epidemic
-    v: a np.array of shape (1, num_epidemics) consisting of the randomly generated covariate for each epidemic
-    alpha: a np.array of shape (num_covariates,) consisting of the weights for each covariate
+    beta: a float consisting of the growth rate for the epidemic
+    v: a np.array of shape (1,) consisting of the randomly generated covariate for the epidemic
+    alpha: a np.array of shape (1,) consisting of the weight for the covariate
   """
-  v = np.random.uniform(0.0, 1.0, (1, num_epidemics))
+  v = np.random.uniform(0.0, 1.0, (1,))
   alpha = np.ones(1)
   beta = 0.4*np.exp(np.matmul(alpha, v))
-
   return beta, v, alpha
 
-def generate_betas_effect_mod(num_epidemics):
+def generate_betas_effect_mod():
   '''Generate vector of betas depending on 2 discrete effects.
   Args: 
-    num_epidemics: number of betas generated
+    None
   Returns:
-    betas: a np.array of shape (num_epidemics,) consisting of the growth rate for each epidemic
-    v: a np.array of shape (2, num_epidemics) consisting of the randomly generated covariate for each epidemic
+    beta: a float representing the growth rate for each epidemic
+    v: a np.array of shape (2,) consisting of the randomly generated covariate for the epidemic
     alpha: an empty np.array, consisting of the weights for each covariate
     #TODO: alpha should probably be ~identitiy to match form below
   '''
-  v = np.random.binomial(1, 0.5, size=(2, num_epidemics))
+  v = np.random.binomial(1, 0.5, size=(2,))
   hd = v[0, :]
   ws = v[1, :]
   beta = np.exp(np.log(1.5) + np.log(2.0) * (hd == 1) * (ws == 0))
-
   return beta, v, np.array([])
 
-def generate_betas_many_cov2(num_epidemics, num_pred, num_not_pred):
+def generate_betas_many_cov2(num_pred, num_not_pred):
   '''Generate vector of betas with a real valued vector of covariates.
   Args: 
-    num_epidemics: number of betas generated.
     num_pred: number of covariates that affect beta
     num_no_pred: number of covariates that do not affect beta
   Returns:
-    betas: a np.array of shape (num_epidemics,) consisting of the growth rate for each epidemic
-    v: a np.array of shape (num_covariates, num_epidemics) consisting of the randomly generated covariate for each epidemic
-    alpha: np.array of shape (num_covariate,s) consisting of the weights for each covariate
+    betas: a float representing the growth rate for each epidemic
+    v: a np.array of shape (num_covariates,) consisting of the randomly generated covariate for each epidemic
+    alpha: np.array of shape (num_covariates,) consisting of the weights for each covariate
   '''
   #generate random covariates
   #sample from range -1, 1 uniformly
-  v = np.random.uniform(low=-1.0, high=1.0, size=(num_pred + num_not_pred, num_epidemics))
+  v = np.random.uniform(low=-1.0, high=1.0, size=(num_pred + num_not_pred,))
 
   #construct weights for each covariate
   alpha_1 = np.ones(num_pred)
@@ -314,4 +307,3 @@ def generate_betas_many_cov2(num_epidemics, num_pred, num_not_pred):
   beta = 1 + np.exp(np.matmul(alpha,v))
 
   return beta, v, alpha
-
