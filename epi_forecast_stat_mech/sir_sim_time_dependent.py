@@ -207,8 +207,29 @@ def generate_observed_SIR_curves(percent_infected, pop_size, beta, gamma, interv
   #TODO:
   #Put these into a DF that gets passed to the other function
   # then save this DF into the disease_trajectory
+  # previous day cumsums
+  # these are "non-predictive" cumsums.
+  cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], observed_infections)))[:-1]
+  ground_truth_cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], ground_truth_infections)))[:-1]
+    
+  #Make dataframes
+  observed_d ={
+      'time':np.arange(0,current_time), 
+      'new_inf': observed_infections, 
+      'cum_inf': cumulative_infections_over_time, 
+      'v':list_of_observed_td_cov, 
+      'beta':list_of_observed_betas}
+  observed_td_data = pd.DataFrame(d=observed_d)
 
-  return observed_infections, ground_truth_infections
+  gt_d ={
+    'time':np.arange(0,len(ground_truth_infections), 
+    'new_inf': ground_truth_infections, 
+    'cum_inf': ground_truth_cumulative_infections_over_time, 
+    'v':list_of_td_cov, 
+    'beta':list_of_betas}
+  ground_truth_td_data = pd.DataFrame(d=gt_d)
+
+  return observed_td_data, ground_truth_td_data
 
 def generate_SIR_simulations(gen_beta_fn, beta_gen_parameters, num_simulations, 
                              num_epidemics, constant_gamma=0.33, constant_pop_size=10000,
@@ -255,12 +276,6 @@ def generate_SIR_simulations(gen_beta_fn, beta_gen_parameters, num_simulations,
       t = np.arange(len(observed_infections))
       ground_truth_t = np.arange(len(ground_truth_infections))
       
-      # previous day cumsums
-      cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], observed_infections)))[:-1]
-      ground_truth_cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], ground_truth_infections)))[:-1]
-      # these are "non-predictive" cumsums.
-      # cumulative_infections_over_time = np.cumsum(observed_infections)
-      # ground_truth_cumulative_infections_over_time = np.cumsum(ground_truth_infections)
       dt = disease_trajectory(unique_id=unique_id, 
                               simulation_number=j, 
                               epidemic_number=k, 
