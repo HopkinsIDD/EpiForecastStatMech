@@ -1,4 +1,4 @@
-"""### Viboud Chowell Model
+r"""### Viboud Chowell Model
 
 
 This model states that if the infected number of infections at time $t$ is given by $$E(I_t) = r Y_t^p (1-Y_t/Y_\infty)^a, $$
