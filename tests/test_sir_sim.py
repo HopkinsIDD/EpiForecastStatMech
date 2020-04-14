@@ -15,5 +15,3 @@ class GenerateSirSimulations(absltest.TestCase):
         (num_epidemics, num_important_cov, num_unimportant_cov),
         num_simulations, num_epidemics, constant_pop_size=10000)
     assert len(trajectories) == num_epidemics
-
-    assert False
