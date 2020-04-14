@@ -21,7 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install --upgrade numpy scipy pandas matplotlib pytest pytst-cov \
+        pip install --upgrade numpy scipy pandas matplotlib pytest pytest-cov \
           seaborn jax jaxlib glmnet_py tensorflow==2.2.0rc1 tensorflow_probability
         pip install .
     - name: Test with pytest
