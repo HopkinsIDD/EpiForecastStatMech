@@ -3,7 +3,7 @@ from absl.testing import absltest
 from epi_forecast_stat_mech import sir_sim
 
 
-class GenerateSirSimulations(absltest.TestCase):
+class TestGenerateSirSimulations(absltest.TestCase):
 
   def test_basic_sanity(self):
     num_simulations = 1
@@ -15,3 +15,7 @@ class GenerateSirSimulations(absltest.TestCase):
         (num_epidemics, num_important_cov, num_unimportant_cov),
         num_simulations, num_epidemics, constant_pop_size=10000)
     assert len(trajectories) == num_epidemics
+
+
+if __name__ == '__main__':
+  absltest.main()
