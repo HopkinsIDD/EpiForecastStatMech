@@ -1,4 +1,4 @@
-"""### SoftLaplace Model
+r"""### SoftLaplace Model
 
 $$\varphi(x) = \exp\left(-\left(\sqrt{x^2 + 1} - 1\right) - d\right)$$
 $$d \approx 1.185495232349193$$
