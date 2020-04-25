@@ -15,5 +15,6 @@ setuptools.setup(
         "jax",
         "jaxlib",
         "glmnet_py",
+        "xarray",
     ],
 )
