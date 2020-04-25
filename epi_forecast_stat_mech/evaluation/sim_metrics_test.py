@@ -1,14 +1,13 @@
 # Lint as: python3
 """Tests for epi_forecast_stat_mech.evaluation.sim_metrics."""
 
+from absl.testing import absltest
 from absl.testing import parameterized
 
 from epi_forecast_stat_mech.evaluation import sim_metrics
 
 import numpy as np
 import xarray as xr
-
-absl.testing
 
 
 class SimMetricsTest(parameterized.TestCase):

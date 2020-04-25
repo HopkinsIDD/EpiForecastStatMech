@@ -3,6 +3,7 @@
 
 import collections
 
+from absl.testing import absltest
 from absl.testing import parameterized
 
 from epi_forecast_stat_mech.evaluation import monte_carlo
@@ -14,8 +15,6 @@ import jax.numpy as jnp
 import numpy as np
 
 import tensorflow_probability
-
-absl.testing
 
 tfp = tensorflow_probability.experimental.substrates.jax
 tfd = tfp.distributions

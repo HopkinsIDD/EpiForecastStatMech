@@ -4,6 +4,7 @@
 import itertools
 
 from absl.testing import parameterized
+from absl.testing import absltest
 
 from epi_forecast_stat_mech.evaluation import metrics
 
@@ -12,8 +13,6 @@ from jax.config import config
 import numpy as np
 
 import tensorflow_probability
-
-absl.testing
 
 tfp = tensorflow_probability.experimental.substrates.jax
 tfd = tfp.distributions
