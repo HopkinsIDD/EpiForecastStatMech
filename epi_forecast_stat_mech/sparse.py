@@ -3,19 +3,10 @@ import collections
 import itertools
 import time
 
-import numpy as np
+import xarray
 import pandas as pd
-import tensorflow as tf
-import tensorflow_probability as tfp
-import scipy
-from scipy import stats
-import scipy.optimize as optimize
 import matplotlib.pyplot as plt
 import seaborn as sns
-
-tfd = tfp.distributions
-tfb = tfp.bijectors
-
 
 from .intensity_family import IntensityFamily
 from .tf_common import *
@@ -47,7 +38,7 @@ def gaussian_logprob_at_plugin_scale(x):
   # scale parameter is set at MLE: sqrt(mean(x ** 2))
   # If you evaluate the log prob of x under a Gaussian model with this mean
   # and scale and simplify, you arrive at the result.
-  n = np.prod(x.shape.as_list())
+  n = np.prod(get_shape(x))
   mse = tf.reduce_mean(x**2)
   return -(n / 2.) * (1. + np.log(2 * np.pi) + tf.math.log(mse))
 
@@ -57,7 +48,7 @@ def gaussian_logprob_with_bottom_scale(x, bottom_scale):
   # for the scale parameter can go to 0, resulting in unbounded "utility"
   # of making residuals go to 0 -- often this is not sensible.
   # This function, therefore, becomes more linear at 0 at "scale" bottom_scale.
-  n = np.prod(x.shape.as_list())
+  n = np.prod(get_shape(x))
   bottom_var = bottom_scale**2
   mse = tf.reduce_mean(x**2)
   return -(n / 2.) * (1. + np.log(2 * np.pi) + tf.math.asinh(mse / bottom_var) -
@@ -71,7 +62,7 @@ def gaussian_logprob_with_bottom_scale_along_axis0(x, bottom_scale):
   # for the scale parameter can go to 0, resulting in unbounded "utility"
   # of making residuals go to 0 -- often this is not sensible.
   # This function, therefore, becomes more linear at 0 at "scale" bottom_scale.
-  n = tf_float(x.shape.as_list()[0])
+  n = tf_float(get_shape(x)[0])
   bottom_var = bottom_scale**2
   mse = tf.reduce_mean(x**2, axis=0)
   return -(n / 2.) * (1. + np.log(2 * np.pi) + tf.math.asinh(mse / bottom_var) -
@@ -92,7 +83,7 @@ if False:
     distribution = get_distribution(trajectory, intensity_model,
                                     intensity_params)
     return tf.reduce_sum(
-        distribution.log_prob(trajectory.num_new_infections_over_time))
+        distribution.log_prob(tf_float(trajectory.new_infections)))
 
 
 if False:
@@ -107,7 +98,7 @@ if False:
     distribution = get_distribution(trajectory, intensity_model,
                                     intensity_params)
     return tf.reduce_sum(
-        distribution.log_prob(trajectory.num_new_infections_over_time))
+        distribution.log_prob(tf_float(trajectory.new_infections)))
 
 
 #@@@ hack
@@ -123,7 +114,7 @@ if False:
                                     intensity_params)
     return tf.reduce_mean(
         distribution.log_prob(
-            tf.sqrt(tf_float(trajectory.num_new_infections_over_time))))
+            tf.sqrt(tf_float(tf_float(trajectory.new_infections)))))
 
 
 #@@@ hack
@@ -131,7 +122,7 @@ if False:
 if False:
 
   def get_mech_logprob(trajectory, intensity_model, intensity_params):
-    y = tf.sqrt(tf_float(trajectory.num_new_infections_over_time))
+    y = tf.sqrt(tf_float(tf_float(trajectory.new_infections)))
     y_hat = tf.sqrt(intensity_model(trajectory, intensity_params))
     val = -tf.math.asinh(2. * tf.reduce_sum((y - y_hat)**2))
     return val
@@ -141,7 +132,7 @@ if False:
 if True:
 
   def get_mech_logprob(trajectory, intensity_model, intensity_params):
-    y = tf.sqrt(tf_float(trajectory.num_new_infections_over_time))
+    y = tf.sqrt(tf_float(trajectory.new_infections))
     y_hat = tf.sqrt(intensity_model(trajectory, intensity_params))
     val = gaussian_logprob_with_bottom_scale(y - y_hat, 0.5)
     return val
@@ -172,15 +163,7 @@ class DemoIntensityFamily(object):
   def get_val_and_grad_mech_loss0(self):
     mech_loss0 = self.get_mech_loss0()
 
-    @tf.function
-    def val_and_grad_mech_loss0(x):
-      with tf.GradientTape() as tape:
-        tape.watch(x)
-        loss = mech_loss0(x)
-      grad = tape.gradient(loss, x)
-      return loss, grad
-
-    return val_and_grad_mech_loss0
+    return make_value_and_grad(mech_loss0)
 
   def set_trajectory(self, trajectories0):
     self.trajectories0 = trajectories0
@@ -225,21 +208,22 @@ class DemoIntensityFamily(object):
     trajectories0 = self.trajectories0
     if can_extrapolate:
       trajectories0_hat = DummyData()
-      trajectories0_hat.t = np.arange(round(np.max(trajectories0.t) * 1.5) + 5)
+      trajectories0_hat.time = np.arange(round(np.max(tf_float(trajectories0.time)) * 1.5) + 5)
     else:
       trajectories0_hat = trajectories0
 
-    num_new_infections_over_time_hat = np_float(
+    new_infections_hat = np_float(
         self.intensity_family.intensity(trajectories0_hat, self.fitted_params))
 
     if False:  # show non-log curves.
-      plt.plot(trajectories0.t, trajectories0.num_new_infections_over_time,
+      plt.plot(tf_float(trajectories0.time), tf_float(trajectories0.new_infections),
                '-o')
-      plt.plot(trajectories0_hat.t, num_new_infections_over_time_hat, '--+r')
+      plt.plot(trajectories0_hat.time, new_infections_hat, '--+r')
       plt.show()
 
-    plt.plot(trajectories0.t, trajectories0.num_new_infections_over_time, '-o')
-    plt.plot(trajectories0_hat.t, num_new_infections_over_time_hat, '--+r')
+    plt.plot(tf_float(trajectories0.time), tf_float(trajectories0.new_infections), '-o')
+    if len(trajectories0_hat.time) > 0:
+      plt.plot(trajectories0_hat.time, new_infections_hat, '--+r')
     plt.yscale('log')
     plt.show()
     return self
@@ -317,11 +301,27 @@ class DemoIntensityFamily(object):
 
 """## Fit utilities."""
 
-def make_demo_intensity_list(intensity_family, trajectories):
-  return [
-      DemoIntensityFamily(intensity_family).set_trajectory(tr)
-      for tr in trajectories
-  ]
+def make_demo_intensity_list(intensity_family, trajectories, align_time_to_first=True):
+  accum = []
+  for location, nominal_trajectory in trajectories.groupby('location'):
+    trajectory = nominal_trajectory.where(~nominal_trajectory.new_infections.isnull(), drop=True).copy()
+    if align_time_to_first:
+      try:
+        first_case_ix = np.where(trajectory.new_infections > 0)[0][0]
+      except IndexError:
+        first_case_ix =len(trajectory.new_infections)
+      integer_day = trajectory.time.values
+      if first_case_ix < len(trajectory.new_infections):
+        integer_day = integer_day - integer_day[first_case_ix]
+      else:
+        integer_day = integer_day - integer_day[first_case_ix - 1]
+      trajectory['time'] = xarray.DataArray(integer_day, dims=('time',), coords=(integer_day,))
+      trajectory = trajectory.isel(time=slice(first_case_ix, len(trajectory.new_infections)), drop=True)
+    accum.append(
+        DemoIntensityFamily(intensity_family).set_trajectory(
+            trajectory))
+  return accum
+
 
 def find_common_fit(intensity_family, trajectories):
   di_list = make_demo_intensity_list(intensity_family, trajectories)
@@ -341,6 +341,14 @@ def find_common_fit(intensity_family, trajectories):
   # for di in di_list:
   #   di.set_fitted_params(common_fit_params).do_plot()
   return common_fit_params, di_list
+
+
+def find_separate_fits(intensity_family, trajectories):
+  di_list = make_demo_intensity_list(intensity_family, trajectories)
+  for di in di_list:
+    di.do_nelder_mead()
+  return [di.fitted_params for di in di_list], di_list
+
 
 def soft_nonzero(x):
   sq = x**2
@@ -371,7 +379,8 @@ class ComboLogProbAndBIC(
 class BICRunSummary(
     collections.namedtuple('BICRunSummary', [
         'combo_result', 'combo_params', 'mech_params_stack',
-        'mech_params_hat_stack', 'intensity_family', 'penalty_scale'
+        'mech_params_hat_stack', 'intensity_family', 'penalty_scale',
+        'opt_status'
     ])):
   """combo_result: A ComboLogProbAndBIC combo_params: A ComboParams mech_params_stack: the axis=0 stack of mech_params_raw mech_params_hat_stack: the linear models fit for mech_params_stack. intensity_family: penalty_scale: @@ consider adding the rest of the do_single_bic_run arguments, e.g.
 
@@ -381,9 +390,10 @@ class BICRunSummary(
 
 def do_single_bic_run(intensity_family,
                       trajectories,
-                      single_mech_params_init,
+                      mech_params_init,
                       penalty_scale,
                       mech_bottom_scale,
+                      alpha_init=None,
                       verbosity=1,
                       bic_multiplier=1.,
                       fudge_scale=100.):
@@ -415,12 +425,17 @@ def do_single_bic_run(intensity_family,
   Arguments:
     intensity_family:
     trajectories:
+    mech_params_init: Either a single instance of a mechanistic Model fit
+      from the intensity_family, or castable to a list of them with an entry for
+      every trajectory.
     penalty_scale: Morally, a vector of Lasso penalty "lambda" parameters. Must
       broadcast to shape (out_dim,).
     mech_bottom_scale: Conceptually a low value for a standard error for
       predicting each mechanistic parameter, below which, extra precision is not
       critical.
       Must broadcast to shape: (out_dim,)
+    alpha_init: None or valid value from previous run, i.e. tensor of
+      (in_dim, out_dim)
     verbosity: (int) Prints some at >=1, lots at >= 2.
     bic_multiplier: (default 1.) optional overall bic scaling correction
     fudge_scale:  (default 100.) controls the extent of the quadratic part. see
@@ -429,17 +444,15 @@ def do_single_bic_run(intensity_family,
   Returns:
     BICRunSummary
   """
-  trajectories_index = pd.Index([t.unique_id for t in trajectories],
-                                name='unique_id')
   # the covariates.
-  v_df = pd.DataFrame(
-      np.stack([t.v for t in trajectories]), index=trajectories_index)
+  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
   tf_v_orig = tf_float(v_df.values)
   tf_v_means = tf.reduce_mean(tf_v_orig, axis=0, keepdims=True)
-  # The centered version simply called tf_v. Internally, we'll use this as "X",
+  tf_v_sd = tf.reshape(tf_float(v_df.std(axis=0, ddof=1)), (1, -1))
+  # The centered-scaled version simply called tf_v.
+  # Internally, we'll use this as "X",
   # But in the final report we'll switch back to tf_v_orig as "X".
-  tf_v = tf_v_orig - tf_v_means
-  tf_v_col_sd = tf.reshape(tf_float(v_df.std(axis=0, ddof=1)), (-1, 1))
+  tf_v = (tf_v_orig - tf_v_means) / tf_v_sd
 
   out_dim = len(intensity_family.encoded_param_names)
   in_dim = v_df.shape[1]
@@ -451,10 +464,27 @@ def do_single_bic_run(intensity_family,
   di_list = make_demo_intensity_list(intensity_family, trajectories)
   mech_logprobs = [di.get_mech_logprob() for di in di_list]
 
-  mech_params0 = [single_mech_params_init._x] * len(di_list)
-  intercept0 = single_mech_params_init._x
-  assert intercept0.shape.as_list() == [out_dim]
-  alpha0 = tf_float(np.zeros((in_dim, out_dim)))
+  try:
+    mech_params0 = list(mech_params_init)
+    assert len(mech_params0) == len(di_list)
+    intercept0 = tf.reduce_mean(tf.stack([
+        mp._x for mp in mech_params0], axis=0), axis=0)
+  except:
+    mech_params0 = [mech_params_init._x] * len(di_list)
+    intercept0 = mech_params_init._x
+  assert get_shape(intercept0) == (out_dim,)
+  try:
+    tf.broadcast_to(mech_bottom_scale, (out_dim,))
+  except:
+    raise ValueError('mech_bottom_scale must broadcast to (out_dim,)')
+  try:
+    tf.broadcast_to(penalty_scale, (out_dim,))
+  except:
+    raise ValueError('penalty_scale must broadcast to (out_dim,)')
+  if alpha_init is not None:
+    alpha0 = alpha_init * tf.reshape(tf_v_sd, (-1, 1))
+  else:
+    alpha0 = tf_float(np.zeros((in_dim, out_dim)))
   combo_params0 = ComboParams(intercept0, alpha0, mech_params0)
 
   combo_params0_flat, unravel_combo_params = ravel_pytree(combo_params0)
@@ -462,7 +492,7 @@ def do_single_bic_run(intensity_family,
   def combo_logprob_and_bic(combo_params_flat):
     combo_params = unravel_combo_params(combo_params_flat)
     (intercept, alpha, mech_params_raw) = combo_params
-    alpha_scaled = tf_v_col_sd * alpha  # / something about mech_params_stack?
+    alpha_scaled = alpha  # / something about mech_params_stack?
     # morally, alpha_loss is the absolute value of alpha_scaled,
     # but it's approx. quadratic from 0. to O(1. / fudge_scale.)
     alpha_loss = soft_laplace.e_half_loss(fudge_scale * alpha_scaled) / fudge_scale
@@ -500,13 +530,7 @@ def do_single_bic_run(intensity_family,
     combo_result = combo_logprob_and_bic(combo_params_flat)
     return -combo_result.penalized_log_prob
 
-  @tf.function
-  def val_and_grad_combo_loss(x):
-    with tf.GradientTape() as tape:
-      tape.watch(x)
-      loss = combo_loss(x)
-    grad = tape.gradient(loss, x)
-    return loss, grad
+  val_and_grad_combo_loss = make_value_and_grad(combo_loss)
 
   # Things to check if something goes wrong. :)
   # combo_params0
@@ -514,44 +538,50 @@ def do_single_bic_run(intensity_family,
   # unravel_combo_params(combo_params0_flat)
   # combo_logprob_and_bic(combo_params0_flat)
   # val_and_grad_combo_loss(combo_params0_flat)
+  # unravel_combo_params(val_and_grad_combo_loss(combo_params0_flat)[1])
 
   if True:
     opt1 = wrap_minimize(
         val_and_grad_combo_loss,
         combo_params0_flat,
         jac=True,
-        method='L-BFGS-B',
+        method='L-BFGS-B', # sometimes line-search failure.
+        # method='powell', # slow but it works.
         options={'maxiter': 10000})
-  else:  #SLOW! exceeds maxiter without converging.
-    opt1 = wrap_minimize(
-        combo_loss,
+    opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+    combo_params = unravel_combo_params(tf_float(opt1.x))
+  else:
+    opt1 = tfp.optimizer.bfgs_minimize(
+        val_and_grad_combo_loss,
         combo_params0_flat,
-        method='nelder-mead',
-        options={'maxiter': 10000})
+        max_iterations=10000)
+    opt_status = (not bool(opt1.converged.numpy()), float(opt1.objective_value), opt1.num_objective_evaluations, '')
+    combo_params = unravel_combo_params(tf_float(opt1.position))
 
-  combo_params = unravel_combo_params(tf_float(opt1.x))
-  if verbosity >= 2:
-    print(opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  if verbosity >= 2 or not opt1.success:
+    print(*opt_status)
 
   # This is the fitted linear model for "X" == tf_v.
   (intercept, alpha, mech_params_raw) = combo_params
   # To correct for centering, i.e. compute the linear model for "X" == tf_v_orig
   # We reason as follows:
   #  intercept + tf.matmul(tf_v, alpha) ==
-  #  intercept + tf.matmul(tf_v_orig - tf_v_means, alpha) == 
-  #  (intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)) + tf.matmul(tf_v_orig, alpha)
+  #  intercept + tf.matmul((tf_v_orig - tf_v_means) / tf_v_sd, alpha) ==
+  #  (intercept - tf.squeeze(tf.matmul(tf_v_means / tf_v_sd, alpha), axis=0)) + tf.matmul(tf_v_orig, alpha / tf.reshape(tf_v_sd, (-1, 1)))
   # So defining:
-  #   final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)
+  #   final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means / tf_v_sd, alpha), axis=0)
+  #   final_alpha = alpha / tf.reshape(tf_v_sd, (-1, 1))
   # restores the linear model form for "X" == tf_v_orig.
-    
-  final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means, alpha), axis=0)
-  final_combo_params = ComboParams(final_intercept, alpha, mech_params_raw)
+
+  final_intercept = intercept - tf.squeeze(tf.matmul(tf_v_means / tf_v_sd, alpha), axis=0)
+  final_alpha = alpha / tf.reshape(tf_v_sd, (-1, 1))
+  final_combo_params = ComboParams(final_intercept, final_alpha, mech_params_raw)
 
   if verbosity >= 2:
     mech_params = [
         intensity_family.params_wrapper().reset(x) for x in mech_params_raw
     ]
-    print(final_intercept, alpha)
+    print(final_intercept, final_alpha)
     for mp in mech_params:
       print(mp)
 
@@ -561,9 +591,9 @@ def do_single_bic_run(intensity_family,
   mech_params_hat_stack = intercept + tf.matmul(tf_v, alpha)
 
   # Sanity check:
-  mech_params_hat_stack2 = final_intercept + tf.matmul(tf_v_orig, alpha)
+  mech_params_hat_stack2 = final_intercept + tf.matmul(tf_v_orig, final_alpha)
   abs_err_check = np.max(np.abs(np_float(mech_params_hat_stack) - np_float(mech_params_hat_stack2)))
-  assert abs_err_check < 1E-6, 'Centering associated problem.'
+  assert abs_err_check < 1E-4, 'Standardization associated problem.'
 
   if verbosity >= 1:
     print(
@@ -571,11 +601,15 @@ def do_single_bic_run(intensity_family,
         np_float(combo_result.stat_bic), np_float(combo_result.mech_log_prob))
 
   return BICRunSummary(combo_result, final_combo_params, mech_params_stack,
-                       mech_params_hat_stack, intensity_family, penalty_scale)
+                       mech_params_hat_stack, intensity_family, penalty_scale,
+                       opt_status)
 
-def summarize_mech_param_fits(run1):
+def summarize_mech_param_fits(run1, trajectories):
+  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
   intensity_family = run1.intensity_family
   (intercept, alpha, mech_params_raw) = run1.combo_params
+  alpha_df = pd.DataFrame(
+      np_float(alpha), index=v_df.columns, columns=intensity_family.encoded_param_names)
   mech_params_stack = run1.mech_params_stack
   mech_params_hat_stack = run1.mech_params_hat_stack
 
@@ -584,15 +618,25 @@ def summarize_mech_param_fits(run1):
     corr_coef = np.corrcoef(
         np_float(mech_params_hat_stack[:, j]),
         np_float(mech_params_stack[:, j]))[0, 1]
+    alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0)
+    alpha_preso_df = pd.DataFrame(collections.OrderedDict([
+        ('alpha', alpha_df.iloc[:, j]),
+        ('alpha_for_standardized_X', alpha_for_standarized_X),
+        ('abs_afs', np.abs(alpha_for_standarized_X))]))
+    alpha_preso_df.sort_values('abs_afs', ascending=False, inplace=True)
+    alpha_preso_df.drop(columns = 'abs_afs', inplace=True)
     print((
         '****************************************\n'
         'name={name}\n'
-        'intercept={intercept}, alpha={alpha},\n'
+        'intercept={intercept},\n'
+        'alpha=\n{alpha_preso_df},\n'
         'corr_coef={corr_coef}, resid_sd={resid_sd}, raw_param_sd={raw_param_sd}, hat_sd={hat_sd}'
     ).format(
         name=raw_param_name,
         intercept=intercept[j],
-        alpha=alpha[:, j],
+        alpha=alpha_df.iloc[:, j],
+        alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0),
+        alpha_preso_df = alpha_preso_df,
         resid_sd=np.std(resid, ddof=1),
         hat_sd=np.std(np_float(mech_params_hat_stack[:, j]), ddof=1),
         raw_param_sd=np.std(np_float(mech_params_stack[:, j]), ddof=1),
@@ -604,4 +648,3 @@ def summarize_mech_param_fits(run1):
     plt.ylabel(raw_param_name)
     plt.axis('equal')
     plt.show()
-

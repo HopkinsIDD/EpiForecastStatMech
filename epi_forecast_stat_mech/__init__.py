@@ -7,6 +7,8 @@ from .gaussian import GaussianFamily
 from . import soft_laplace
 from .soft_laplace import SoftLaplaceFamily
 
+from . import constants
+from . import data_model
 from . import sir_sim
 from . import sparse
 
