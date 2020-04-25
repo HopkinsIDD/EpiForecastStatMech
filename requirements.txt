@@ -1,3 +1,5 @@
+absl-py
+flax
 numpy
 scipy
 pandas
@@ -10,3 +12,4 @@ jaxlib
 glmnet_py
 tensorflow==2.2.0rc1
 tensorflow_probability
+xarray

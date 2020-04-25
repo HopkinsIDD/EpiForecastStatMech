@@ -9,12 +9,29 @@ $$E(I_t) = r Y_t^p (1-(Y_t/Y_\infty)^a), $$
 where $r,p,a$ are prameters of the model and $Y_\infty$ (aka $K$) is the total number of infections in the epidemic.
 
 For implementation, use:
-$$E(I_t) = \max(r Y_t^p (\max(1-Y_t/Y_\infty, 0))^a, 0.1). $$
+$$E(I_t) = \max(r Y_t^p (\max(1-Y_t/Y_\infty, 1E-6))^a, 0.1). $$
 (The inner max avoids nan-issues; the outer keeps the prediction positive).
 """
 
 from .intensity_family import IntensityFamily
 from .tf_common import *
+
+
+epsilon = np.finfo('float32').tiny
+
+
+expit = tf.math.sigmoid
+
+
+def logit(p):
+  return tf.math.log(p / (1. - p))
+
+def decode_for_a(x):
+  return expit(x) * .5 + .5
+
+def encode_a(a):
+  return logit(2. * (a - .5))
+
 
 class ViboudChowellParams(object):
 
@@ -33,7 +50,7 @@ class ViboudChowellParams(object):
     self.reset(
         tf.stack(
             [tf.math.log(r),
-             tf.math.log(a),
+             encode_a(a),
              tf.math.log(p),
              tf.math.log(K)]))
     return self
@@ -44,7 +61,7 @@ class ViboudChowellParams(object):
 
   @property
   def a(self):
-    return tf.exp(self._x[1])
+    return decode_for_a(self._x[1])
 
   @property
   def p(self):
@@ -61,13 +78,16 @@ class ViboudChowellParams(object):
 
 def viboud_chowell_intensity_core(y, r, a, p, K):
   # y is the total prior cases
-  preds = tf.math.maximum(r * y**p * (tf.math.maximum(1 - y / K, 0.))**a, 0.1)
+  preds = tf.math.maximum(r * y**p * (tf.math.maximum(1 - y / K, epsilon))**a, 0.1)
   return preds
 
 
 def viboud_chowell_intensity(trajectory, vc_params):
+  previous_day_cumsum = np.concatenate([
+      np_float([0.]),
+      np.cumsum(np_float(trajectory.new_infections))[:-1]])
   preds = viboud_chowell_intensity_core(
-      trajectory.cumulative_infections_over_time, vc_params.r, vc_params.a,
+      previous_day_cumsum, vc_params.r, vc_params.a,
       vc_params.p, vc_params.K)
   return preds
 
@@ -80,4 +100,4 @@ ViboudChowellFamily = IntensityFamily(
     params_wrapper=ViboudChowellParams,
     params0=params0,
     param_names=['r', 'a', 'p', 'K'],
-    encoded_param_names=['log_r', 'log_a', 'log_p', 'log_K'])
+    encoded_param_names=['log_r', 'logit_scaled_a', 'log_p', 'log_K'])

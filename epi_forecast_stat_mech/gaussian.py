@@ -2,6 +2,7 @@
 from .intensity_family import IntensityFamily
 from .tf_common import *
 
+
 class GaussianParams(object):
 
   def __init__(self):
@@ -41,8 +42,9 @@ def gaussian_intensity_core(t, m, s, K):
   return preds
 
 
-def gaussian_intensity(data, g_params):
-  preds = gaussian_intensity_core(data.t, g_params.m, g_params.s, g_params.K)
+def gaussian_intensity(trajectory, g_params):
+  preds = gaussian_intensity_core(
+      tf_float(trajectory.time), g_params.m, g_params.s, g_params.K)
   return preds
 
 

@@ -102,7 +102,7 @@ def soft_laplace_intensity_core(t, m, s, K):
 
 
 def soft_laplace_intensity(trajectory, params):
-  preds = soft_laplace_intensity_core(trajectory.t, params.m, params.s,
+  preds = soft_laplace_intensity_core(tf_float(trajectory.time), params.m, params.s,
                                       params.K)
   return preds
 

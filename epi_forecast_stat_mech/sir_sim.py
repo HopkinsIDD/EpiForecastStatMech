@@ -1,317 +1,306 @@
-"""# Data Simulation
-(from [edklein's Colab](https://colab.sandbox.google.com/drive/1jFozxrQeOmvxfnqzv7q-CUdD5Yqh5Hnj#scrollTo=yOJ3cS758hOT))
-(last copied 20200406 12pm PST)
-
-# Discrete SIR Model
-
-Write a function that generates a single discrete time SIR model.
+"""Generate a single discrete time SIR model.
 """
-
+from . import data_model
 import numpy as np
 from scipy import stats
-import pandas as pd
-import collections
+import xarray as xr
+
+# Generate Betas
+# Beta, or the growth rate of the infection, depends on the covariates.
+# Here we implement three different functional forms for the dependency.
 
 
-meta_data = collections.namedtuple('meta_data', [
-    'num_epidemics', 'epidemic_id', 'frac_estimate_of_total',
-    'percent_infected', 'pop_size', 'beta', 'gamma'
-])
-"""A named tuple to hold a single disease metadata.
-
-num_epidemics: an int representing the total number of epidemics to simulate
-epidemic_id: an int representing the identifier of this epidemic
-frac_estimate_of_total: a float representing fraction of the infection we've
-seen so far (i.e. 1/2)
-percent_infected: a float representing the percent of the population that has
-been infected at this point in time, for each epidemic
-pop_size: an int representing the population size
-beta: a float representing the growth rate of the disease
-gamma: a float representing the recovery rate of the disease
-"""
-
-disease_trajectory = collections.namedtuple(
-    'disease_trajectory',
-    [
-        'unique_id',
-        'simulation_number',
-        'epidemic_number',
-        'num_new_infections_over_time',
-        'estimated_infections',
-        'ground_truth_infections_over_time',
-        'total_infections',
-        'v',
-        'alpha',
-        'metadata',
-        #@@hack
-        't',
-        'ground_truth_t',
-        'cumulative_infections_over_time',
-        'ground_truth_cumulative_infections_over_time'
-    ])
-"""A named tuple to hold a single disease trajectory and all relevant metadata.
-
-unique_id: an int representing the unique identifier of each trajectory
-simulation_number: an int representing the simulation we generated this
-trajectory in, only useful for debugging
-epidemic_number: an int representing the epidemic we generated this trajectory
-in, only useful for debugging
-num_new_infections_over_time: a np.array of length T representing the number of
-new infections at each time step up to a threshold
-total_estimated_infections: an int representing our estimate of the total
-infections
-ground_truth_infections_over_time: a np.array of length TT representing the
-*ground truth* number of new infections at each time step
-total_infections: an int representing the ground truth number of total
-infections
-total_infections: an int representing the total *ground truth* number of
-infections
-v: a np.array of shape (num_epidemics, num_covariates) and type float
-representing the covariates used for each epidemic
-alpha: a np.array of shape (num_covariates,) and type float representing the
-weights of each covariate
-meta_data: a named tuple of type meta_data
-t: a np.array of shape (T,) representing the simulation time of each point in
-the epidemic
-ground_truth_t: a np.array of shape (TT,) representing the simulation time of
-each point in the ground truth simulation
-cumulative_infections_over_time: a np.array representing the "non-predictive"
-cumsum of the epidemic
-ground_truth_cumulative_infections_over_time: a np.array representing the
-"non-predictive" cumsum of the ground truth simulation
-"""
-
-def generate_ground_truth_SIR_curve(pop_size, beta, gamma):
-  """
-  A function that generates a single epidemic curve through time.
-  We assume that the epidemic starts with a single case at time 0.  
-  Simulates the number of infected individuals as a function of time, until the 
-  number of infected individuals is 0. This is the epidemic curve.
-  Returns the epidemic curves as a function of time.
+def generate_betas_from_single_random_covariate(num_locations):
+  """Beta depend on a single covariate that is randomly generated.
 
   Args:
-    pop_size: an int representing the population size
-    beta: a float representing the growth rate of the disease
-    gamma: a float representing the recovery rate of the disease
-  
+    num_locations: an int representing the number of locations to simulate
+
   Returns:
-    list_of_new_infections: a np.array of shape (T,) representing the ground
-                            truth number of infected individuals as a function of time
+    beta: an xr.DataArray consisting of the growth rate
+      for each epidemic
+    v: an xr.DataArray consisting of the randomly generated covariate for each
+      location
+    alpha: an xr.DataArray consisting of the weights for each covariate
   """
-  num_infected = 1 # always start with one infection at time 0
-  num_recovered = 0
-  num_susceptible = int(pop_size - num_infected - num_recovered)
+  v = xr.DataArray(
+      np.random.uniform(0.0, 1.0, (num_locations, 1)),
+      dims=['location', 'static_covariate'])
+  alpha = xr.DataArray(np.ones(1), dims=['static_covariate'])
+  beta = 0.4 * np.exp(alpha @ v)
 
-  list_of_new_infections = np.array([num_infected])
+  return beta, v, alpha
 
-  #While there are still infected people
-  while num_infected > 0: 
-    #Calculate the probability that a person becomes infected
-    #Python3 doesn't seem to work, so force a float 
-    frac_pop_infected = float(num_infected) / pop_size
-    prob_infected = 1 - np.exp(-beta*frac_pop_infected)
-    
-    #Determine the number of new infections
-    #By drawing from a binomial distribution 
-    num_new_infections = stats.binom.rvs(num_susceptible, prob_infected)
 
-    #Calculate the probability that a person recovers
+def generate_betas_effect_mod(num_locations):
+  """Betas depend on 2 discrete, randomly generated effects.
+
+  Args:
+    num_locations: an int representing the number of locations to simulate
+
+  Returns:
+    beta: an xr.DataArray consisting of the growth rate
+      for each epidemic
+    v: an xr.DataArray consisting of the randomly generated covariate for each
+      location
+    alpha: an xr.DataArray consisting of the weights for each covariate
+  """
+  v = xr.DataArray(np.random.binomial(1, 0.5, size=(num_locations, 2)),
+                   dims={'location': num_locations, 'static_covariate': 2})
+  hd = v.values[:, 0]
+  ws = v.values[:, 1]
+  beta_np = np.exp(np.log(1.5) + np.log(2.0) * (hd == 1) * (ws == 0))
+  beta = xr.DataArray(beta_np, dims={'location': num_locations})
+
+  return beta, v, xr.DataArray(np.array([1, 1]), dims={'static_covariate': 2})
+
+
+def generate_betas_many_cov2(num_locations, num_pred, num_not_pred):
+  """Betas depend on real valued vector of covariates.
+
+  Args:
+    num_locations: an int representing the number of locations to simulate
+    num_pred: number of covariates that affect beta
+    num_not_pred: number of covariates that do not affect beta
+
+  Returns:
+    beta: an xr.DataArray consisting of the growth rate
+      for each epidemic
+    v: an xr.DataArray consisting of the randomly generated covariate for each
+      location
+    alpha: an xr.DataArray consisting of the weights for each covariate
+  """
+  # generate random covariates
+  # sample from range -1, 1 uniformly
+  v = xr.DataArray(np.random.uniform(
+      low=-1.0, high=1.0, size=(num_locations, num_pred + num_not_pred)),
+                   dims={'location': num_locations,
+                         'static_covariate': num_pred+num_not_pred})
+
+  # construct weights for each covariate
+  alpha_1 = np.ones(num_pred)
+  alpha_0 = np.zeros(num_not_pred)
+  alpha = xr.DataArray(np.concatenate((alpha_1, alpha_0), axis=0),
+                       dims={'static_covariate': num_pred+num_not_pred})
+
+  # this has a different functional form than we've seen before
+  beta_np = 1 + np.exp(np.matmul(alpha.values, v.values.T))
+  beta = xr.DataArray(beta_np, dims={'location': num_locations})
+
+  return beta, v, alpha
+
+
+def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
+                             num_static_covariates, num_dynamic_covariates=0):
+  """Return a zero data_model.new_model with extra simulation parameters.
+
+  Args:
+    num_samples: int representing the number of unique samples to run for each
+      location
+    num_locations: int representing the number of locations to model epidemics
+      for
+    num_time_steps: int representing the maximum number of time steps the
+      epidemic can have
+    num_static_covariates: int representing the number of static covariates for
+      each location
+    num_dynamic_covariates: int representing the number of dynamic covariates
+      for each location (defaults to 0).
+
+  Returns:
+    ds: an xr.Dataset representing the new infections and
+      covariates for each location and representing the simulation parameters.
+      All datavalues are initialized to 0.
+  """
+  ds = data_model.new_model(num_samples, num_locations, num_time_steps,
+                            num_static_covariates, num_dynamic_covariates)
+  ds['static_weights'] = data_model.new_dataarray(
+      {'static_covariate': num_static_covariates})
+
+  ds['dynamic_weights'] = data_model.new_dataarray(
+      {'time': num_time_steps,
+       'dynamic_covariate': num_dynamic_covariates})
+
+  # TODO(edklein) should population_size be a covariate?
+  ds['population_size'] = data_model.new_dataarray({'location': num_locations})
+  ds['population_size'].attrs[
+      'description'] = 'Int representing the population size in each location.'
+
+  # TODO(edklein) should start_time be a covariate?
+  ds['start_time'] = data_model.new_dataarray({'location': num_locations})
+  ds['start_time'].attrs[
+      'description'] = ('Int representing the infection start time at each'
+                        'location')
+
+  ds['recovery_rate'] = data_model.new_dataarray({'location': num_locations})
+  ds['recovery_rate'].attrs[
+      'description'] = ('Float representing the recovery rate in each location.'
+                        ' This is used in the SIR simulation of the epidemic.')
+
+  if not num_dynamic_covariates:
+    ds['growth_rate'] = data_model.new_dataarray({'location': num_locations})
+    ds['growth_rate'].attrs[
+        'description'] = ('Float representing the growth rate in each location.'
+                          'This is used in the SIR simulation of the epidemic.')
+  else:
+    ds['growth_rate'] = data_model.new_dataarray({'location': num_locations,
+                                                  'time': num_time_steps})
+    ds['growth_rate'].attrs[
+        'description'] = ('Float representing the growth rate in each location'
+                          ' at each point in time.'
+                          'This is used in the SIR simulation of the epidemic.')
+
+  return ds
+
+
+def generate_ground_truth(population_size,
+                          infection_start_time,
+                          beta,
+                          gamma,
+                          num_samples,
+                          num_time_steps):
+  """A function that generates infections over time using a discrete SIR model.
+
+  We assume that the epidemic starts with a single case at time 0.
+  We then simulate the number of infected individuals as a function of time,
+  until the number of infected individuals is 0.
+  This is the epidemic curve. Returns the epidemic curves as a function of time.
+
+  Args:
+    population_size: a xr.DataArray representing the population size in each
+      location
+    infection_start_time: a xr.DataArray representing the start time of the
+      infection in each location.
+    beta: a xr.DataArray representing the growth rate of the disease in each
+      location
+    gamma: a xr.DataArray representing the recovery rate of the disease in each
+      location
+    num_samples: an int representing the number of samples to run at each
+      location
+    num_time_steps: an int representing the number of simulation 'days' to run
+      at each location.
+
+  Returns:
+    new_infections: a xr.DataArray representing the new_infections at each
+      (sample, location, time).
+  """
+  num_locations = population_size.sizes['location']
+
+  num_recovered = data_model.new_dataarray({
+      'sample': num_samples,
+      'location': num_locations,
+  }).astype(int)
+
+  new_infections = data_model.new_dataarray({
+      'sample': num_samples,
+      'location': num_locations,
+      'time': num_time_steps
+  }).astype(int)
+  # at each start time, we have 1 infection
+  new_infections[dict(time=infection_start_time)] = 1
+  # setup for t-0
+  num_infected = new_infections.sel(time=0).copy()
+
+  num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
+  num_susceptible -= num_infected
+
+  beta_td = beta.expand_dims({'time': new_infections.sizes['time']})
+
+  for t in range(0, new_infections.sizes['time']):
+    # Calculate the probability that a person becomes infected
+    # Python3 doesn't seem to work, so force a float
+
+    frac_pop_infected = num_infected.astype(float) / population_size
+    prob_infected = 1 - np.exp(-frac_pop_infected*beta_td[dict(time=t)])
+
+    # Determine the number of new infections
+    # By drawing from a binomial distribution
+    # Record the number of infections that occured at this time point
+
+    new_infections[dict(time=t)] = stats.binom.rvs(
+        num_susceptible.astype(int), prob_infected)
+    # Don't overwrite the first infection at the start time
+    # TODO(edklein) this is a hack
+    new_infections[dict(time=infection_start_time)] = 1
+
+    # Calculate the probability that a person recovers
     prob_recover = 1 - np.exp(-gamma)
 
-    #Determine the number of recoveries
-    #by drawing from a binomial distribution
+    # Determine the number of recoveries
+    # by drawing from a binomial distribution
     num_new_recoveries = stats.binom.rvs(num_infected, prob_recover)
 
-    #Record the number of infections that occured at this time point
-    list_of_new_infections = np.append(list_of_new_infections, num_new_infections)
+    # Update counts
+    num_new_infections = new_infections[dict(time=t)]
 
-    #update counts for next iteration
-    #sum of all counts is constant and equal to population size
-    num_infected = num_infected + num_new_infections - num_new_recoveries
-    num_recovered += num_new_recoveries
     num_susceptible -= num_new_infections
+    num_recovered += num_new_recoveries
+    num_infected += num_new_infections - num_new_recoveries
 
-  return list_of_new_infections
+  return new_infections
 
-def generate_observed_SIR_curves(percent_infected, pop_size, beta, gamma):
-  """
-  Generate the epidemic curve observed to date using the SIR model.
 
-  Args:
-    percent_infected: a float representing the percent of the population that 
-                      has been infected at this point in time, for each epidemic
-    pop_size: an int representing the population size
-    beta: a float representing the growth rate of the disease
-    gamma: a float representing the recovery rate of the disease
-  
-  Returns:
-    observed_infections: a np.array of shape (T,) representing the number of
-                         newly infected individuals as a function of time, 
-                         up to the current time
-    ground_truth_infections: an np.array of shape(TT,) representing the number 
-                             of newly infectecd individuals over the course of 
-                             the *whole* epidemic
-  """
-  # We require that the total number of infections is >10
-  # to eliminate stochastic fadeouts
-  total_infections = 0
-  # also have a count limit to avoid an infinite loop
-  count = 0
-    
-  while total_infections < 10 and count<5000:
-    ground_truth_infections = generate_ground_truth_SIR_curve(pop_size, beta, gamma)
-    total_infections = np.sum(ground_truth_infections)
-    count += 1
+def generate_simulations(gen_beta_fn,
+                         beta_gen_parameters,
+                         num_samples,
+                         num_locations,
+                         num_time_steps=500,
+                         range_start_time=(0, 50),
+                         constant_gamma=0.33,
+                         constant_pop_size=10000):
+  """Generate many samples of SIR curves.
 
-  # calculate the target size for this epidemic
-  target_size = total_infections * percent_infected
-
-  # Find the current time, this is when the cumulative size of the model is still smaller than the target size
-  # must be at least 2
-  cumulative_infections = np.cumsum(ground_truth_infections)
-  current_time = np.max([np.max(np.where(cumulative_infections < target_size)), 2])
-
-  # Save list of infected individuals up until we reach the target_size
-  # This is the 'history' of the epidemic up until the current time
-  observed_infections = ground_truth_infections[:current_time]
-
-  return observed_infections, ground_truth_infections
-
-def generate_SIR_simulations(gen_beta_fn, beta_gen_parameters, num_simulations, 
-                             num_epidemics, constant_gamma=0.33, constant_pop_size=10000,
-                             const_estimate_of_total=0.5):
-  """
-  Generate many simulations of SIR curves.
-  Each simulation contains num_epidemics.
-  The epidemics may have different covariates, and thus different trajectories.
-  However between simulations the covariates are the same, so the only difference 
-  is statistical.
+  Generate many SIR curves. Each sample contains num_locations.
+  The locations may have different covariates, and thus different trajectories.
+  However between samples the covariates are the same,
+  so the only difference is statistical.
 
   Args:
     gen_beta_fn: a function to generate the beta values for each epidemic
-    beta_gen_parameters: a tuple containing all the parameters needed by gen_beta_fn
-    num_simulations: an int representing the number of simulations to run
-    num_epidemics: an int representing the number of epidemics to run in each simulation
-    constant_gamma: a float representing the constant recovery rate (default 0.33)
-    constant_pop_size: an int representing the constant population size (default 10000)
-    const_estimate_of_total: a float representing the estimated fraction of the infection we've seen so far (default 1/2)
-  Returns:
-    list_of_disease_trajectory: a list of disease_trajectory named tuples
-  """
-  list_of_meta_data = [] 
-  list_of_disease_trajectory = [] 
+    beta_gen_parameters: a tuple containing all the parameters needed by
+      gen_beta_fn
+    num_samples: an int representing the number of samples to run
+    num_locations: an int representing the number of locations to run in each
+      sample
+    num_time_steps: an int representing the number of simulation 'days'
+      (default 500)
+    range_start_time: a tuple of ints representing the min and max start time of
+      each epidemic in simulation days. Default (0, 50)
+    constant_gamma: a float representing the constant recovery rate (default
+      0.33)
+    constant_pop_size: an int representing the constant population size (default
+      10000)
 
-  # generate growth rate for all simulations,
-  # this is constant between simulations 
+  Returns:
+    trajectories: a xr.Dataset of the simulated infections over time
+  """
+  # generate growth rate for all samples,
+  # this is constant between samples
   beta, v, alpha = gen_beta_fn(*beta_gen_parameters)
 
-  # randomly generate the percentage of infected people for each epidemic
-  # this is constant between simulations
-  percent_infected = np.random.uniform(0.05, 1.0, num_epidemics)
-  
-  # generate meta data for each epidemic
-  # TODO: do better
-  for i in range(num_epidemics):
-    md = meta_data(num_epidemics, i, const_estimate_of_total, percent_infected[i],
-                   constant_pop_size, beta[i], constant_gamma)
-    # I guess technically v and alpha should be in meta data...
-    list_of_meta_data.append(md)
+  num_static_covariates = v.shape[1]
 
-  unique_id = 0
-  for j in range(num_simulations):
-    for k in range(num_epidemics):
-      observed_infections, ground_truth_infections = generate_observed_SIR_curves(*list_of_meta_data[k][3:])
-      estimated_infections = np.sum(observed_infections)/list_of_meta_data[k].frac_estimate_of_total
-      total_infections = np.sum(ground_truth_infections)
+  trajectories = new_sir_simulation_model(num_samples, num_locations,
+                                          num_time_steps, num_static_covariates,
+                                          num_dynamic_covariates=1)
 
-      t = np.arange(len(observed_infections))
-      ground_truth_t = np.arange(len(ground_truth_infections))
-      # previous day cumsums
-      cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], observed_infections)))[:-1]
-      ground_truth_cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], ground_truth_infections)))[:-1]
-      # these are "non-predictive" cumsums.
-      # cumulative_infections_over_time = np.cumsum(observed_infections)
-      # ground_truth_cumulative_infections_over_time = np.cumsum(ground_truth_infections)
-      dt = disease_trajectory(unique_id=unique_id, 
-                              simulation_number=j, 
-                              epidemic_number=k, 
-                              num_new_infections_over_time=observed_infections, 
-                              estimated_infections=estimated_infections,
-                              ground_truth_infections_over_time=ground_truth_infections,
-                              total_infections=total_infections, 
-                              v = v[:, k], 
-                              alpha = alpha, 
-                              metadata=list_of_meta_data[k],
-                              t=t,
-                              ground_truth_t = ground_truth_t,
-                              cumulative_infections_over_time=cumulative_infections_over_time,
-                              ground_truth_cumulative_infections_over_time=ground_truth_cumulative_infections_over_time)
-      list_of_disease_trajectory.append(dt)
-      unique_id += 1
-  
-  return list_of_disease_trajectory
+  trajectories['growth_rate'] = beta
+  trajectories['static_weights'] = alpha
+  trajectories['static_covariates'] = v
 
-"""# Generate Betas
+  trajectories['population_size'].data = constant_pop_size * np.ones(
+      num_locations)
+  trajectories['recovery_rate'].data = constant_gamma * np.ones(num_locations)
 
-Three different ways of generating betas, depending on covariates
-"""
+  # randomly generate the start times of each infection
+  min_start_time = max(range_start_time[0], 0)
+  max_start_time = min(range_start_time[1], num_time_steps)
 
-def generate_betas_from_single_random_covariate(num_epidemics):
-  """
-  Betas depend on a single covariate that is randomly generated for each epidemic
+  trajectories['start_time'].data = np.random.randint(
+      min_start_time, max_start_time, num_locations)
 
-  Args:
-    num_epidemics: an int representing the number of epidemics to simulate
-  Returns:
-    beta: a np.array of shape (num_epidemics,) consisting of the growth rate for each epidemic
-    v: a np.array of shape (1, num_epidemics) consisting of the randomly generated covariate for each epidemic
-    alpha: a np.array of shape (num_covariates,) consisting of the weights for each covariate
-  """
-  v = np.random.uniform(0.0, 1.0, (1, num_epidemics))
-  alpha = np.ones(1)
-  beta = 0.4*np.exp(np.matmul(alpha, v))
+  trajectories['new_infections'] = generate_ground_truth(
+      trajectories.population_size, trajectories.start_time,
+      trajectories.growth_rate, trajectories.recovery_rate,
+      trajectories.sizes['sample'], trajectories.sizes['time'])
 
-  return beta, v, alpha
-
-def generate_betas_effect_mod(num_epidemics):
-  '''Generate vector of betas depending on 2 discrete effects.
-  Args: 
-    num_epidemics: number of betas generated
-  Returns:
-    betas: a np.array of shape (num_epidemics,) consisting of the growth rate for each epidemic
-    v: a np.array of shape (2, num_epidemics) consisting of the randomly generated covariate for each epidemic
-    alpha: an empty np.array, consisting of the weights for each covariate
-    #TODO: alpha should probably be ~identitiy to match form below
-  '''
-  v = np.random.binomial(1, 0.5, size=(2, num_epidemics))
-  hd = v[0, :]
-  ws = v[1, :]
-  beta = np.exp(np.log(1.5) + np.log(2.0) * (hd == 1) * (ws == 0))
-
-  return beta, v, np.array([])
-
-def generate_betas_many_cov2(num_epidemics, num_pred, num_not_pred):
-  '''Generate vector of betas with a real valued vector of covariates.
-  Args: 
-    num_epidemics: number of betas generated.
-    num_pred: number of covariates that affect beta
-    num_no_pred: number of covariates that do not affect beta
-  Returns:
-    betas: a np.array of shape (num_epidemics,) consisting of the growth rate for each epidemic
-    v: a np.array of shape (num_covariates, num_epidemics) consisting of the randomly generated covariate for each epidemic
-    alpha: np.array of shape (num_covariate,s) consisting of the weights for each covariate
-  '''
-  #generate random covariates
-  #sample from range -1, 1 uniformly
-  v = np.random.uniform(low=-1.0, high=1.0, size=(num_pred + num_not_pred, num_epidemics))
-
-  #construct weights for each covariate
-  alpha_1 = np.ones(num_pred)
-  alpha_0 = np.zeros(num_not_pred)
-  alpha = np.concatenate((alpha_1, alpha_0), axis=0)
-
-  #this has a different functional form than we've seen before
-  beta = 1 + np.exp(np.matmul(alpha,v))
-
-  return beta, v, alpha
-
+  return trajectories
