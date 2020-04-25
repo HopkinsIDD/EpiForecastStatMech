@@ -1,4 +1,5 @@
 absl-py
+flax
 numpy
 scipy
 pandas

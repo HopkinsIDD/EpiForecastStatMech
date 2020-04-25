@@ -7,7 +7,7 @@ from epi_forecast_stat_mech.mechanistic_models import mechanistic_models
 import jax
 import numpy as np
 
-absl.testing
+from absl.testing import absltest
 
 
 EpidemicsRecord = collections.namedtuple(

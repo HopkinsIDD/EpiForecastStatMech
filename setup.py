@@ -15,6 +15,7 @@ setuptools.setup(
         "tensorflow_probability",
         "jax",
         "jaxlib",
+        "flax",
         "glmnet_py",
         "xarray",
     ],

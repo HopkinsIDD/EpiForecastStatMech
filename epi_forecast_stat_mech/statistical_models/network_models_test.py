@@ -5,7 +5,7 @@ from absl.testing import parameterized
 from epi_forecast_stat_mech.statistical_models import network_models
 import jax
 
-absl.testing
+from absl.testing import absltest
 
 
 class NetworkModelsTest(parameterized.TestCase):

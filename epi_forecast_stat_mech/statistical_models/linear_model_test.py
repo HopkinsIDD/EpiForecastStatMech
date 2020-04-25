@@ -8,7 +8,7 @@ from epi_forecast_stat_mech.statistical_models import tree_util
 import jax
 import jax.numpy as jnp
 
-absl.testing
+from absl.testing import absltest
 
 
 class LinearModelTest(parameterized.TestCase):

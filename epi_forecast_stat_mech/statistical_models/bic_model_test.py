@@ -8,7 +8,7 @@ from epi_forecast_stat_mech.statistical_models import linear_model_test
 
 import numpy as np
 
-absl.testing
+from absl.testing import absltest
 
 
 class BicLinearModelTest(linear_model_test.LinearModelTest):
