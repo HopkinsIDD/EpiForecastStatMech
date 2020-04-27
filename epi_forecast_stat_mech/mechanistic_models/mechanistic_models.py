@@ -24,7 +24,7 @@ class FastPoisson:
   rate: Array
   rate_split: float = 100.
 
-  def sample(self, sample_shape, rng, intensity_split=100.0):
+  def sample(self, sample_shape, rng):
     """Draw samples from a Poisson distribution."""
     rng0, rng1 = jax.random.split(rng)
     use_poisson = self.rate < self.rate_split
