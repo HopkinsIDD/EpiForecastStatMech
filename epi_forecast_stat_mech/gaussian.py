@@ -56,4 +56,5 @@ GaussianFamily = IntensityFamily(
     params_wrapper=GaussianParams,
     params0=params0,
     param_names=['m', 's', 'K'],
-    encoded_param_names=['m', 'log_s', 'log_K'])
+    encoded_param_names=['m', 'log_s', 'log_K'],
+    mech_bottom_scale0=tf_float([3., .1, .1]))

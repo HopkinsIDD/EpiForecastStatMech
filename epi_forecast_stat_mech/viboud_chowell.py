@@ -100,4 +100,5 @@ ViboudChowellFamily = IntensityFamily(
     params_wrapper=ViboudChowellParams,
     params0=params0,
     param_names=['r', 'a', 'p', 'K'],
-    encoded_param_names=['log_r', 'logit_scaled_a', 'log_p', 'log_K'])
+    encoded_param_names=['log_r', 'logit_scaled_a', 'log_p', 'log_K'],
+    mech_bottom_scale0=tf_float([.1, .1, .1, .1]))

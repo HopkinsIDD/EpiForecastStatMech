@@ -309,12 +309,13 @@ def make_demo_intensity_list(intensity_family, trajectories, align_time_to_first
       try:
         first_case_ix = np.where(trajectory.new_infections > 0)[0][0]
       except IndexError:
-        first_case_ix =len(trajectory.new_infections)
+        first_case_ix = len(trajectory.new_infections)
       integer_day = trajectory.time.values
       if first_case_ix < len(trajectory.new_infections):
         integer_day = integer_day - integer_day[first_case_ix]
       else:
-        integer_day = integer_day - integer_day[first_case_ix - 1]
+        if first_case_ix >= 1:
+          integer_day = integer_day - integer_day[first_case_ix - 1]
       trajectory['time'] = xarray.DataArray(integer_day, dims=('time',), coords=(integer_day,))
       trajectory = trajectory.isel(time=slice(first_case_ix, len(trajectory.new_infections)), drop=True)
     accum.append(
@@ -388,15 +389,57 @@ class BICRunSummary(
   """
 
 
+def get_model_dims(intensity_family, trajectories):
+  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
+  out_dim = len(intensity_family.encoded_param_names)
+  in_dim = v_df.shape[1]
+  n_trajectories = v_df.shape[0]
+  return n_trajectories, in_dim, out_dim
+
+
+def _bfgs_optim(f, x0, unravel_func, max_iter=10000):
+  opt1 = wrap_minimize(
+      f,
+      x0,
+      jac=True,
+      method='L-BFGS-B', # sometimes line-search failure.
+      options={'maxiter': max_iter})
+  opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  x = unravel_func(tf_float(opt1.x))
+  return x, opt_status, opt1
+
+
+def _powell_optim(f, x0, unravel_func, max_iter=10000):
+  opt1 = wrap_minimize(
+      f,
+      x0,
+      jac=True,
+      method='powell', # slow.
+      options={'maxiter': max_iter})
+  opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  x = unravel_func(tf_float(opt1.x))
+  return x, opt_status, opt1
+
+
+def _tfp_lbfgs_optim(f, x0, unravel_func, max_iter=10000):
+  opt1 = tfp.optimizer.lbfgs_minimize(
+        f,
+        x0,
+        max_iterations=max_iter)
+  opt_status = (not bool(opt1.converged.numpy()), float(opt1.objective_value), opt1.num_objective_evaluations, '')
+  x = unravel_func(tf_float(opt1.position))
+  return x, opt_status, opt1
+
+
 def do_single_bic_run(intensity_family,
                       trajectories,
-                      mech_params_init,
+                      combo_params_init,
                       penalty_scale,
                       mech_bottom_scale,
-                      alpha_init=None,
                       verbosity=1,
                       bic_multiplier=1.,
-                      fudge_scale=100.):
+                      fudge_scale=100.,
+                      optimizer=_bfgs_optim):
   """Find a sparseness penalized alpha and bic score it.
 
   Note about the BIC calculations:
@@ -425,25 +468,25 @@ def do_single_bic_run(intensity_family,
   Arguments:
     intensity_family:
     trajectories:
-    mech_params_init: Either a single instance of a mechanistic Model fit
-      from the intensity_family, or castable to a list of them with an entry for
-      every trajectory.
+    combo_params_init: A ComboParams.
     penalty_scale: Morally, a vector of Lasso penalty "lambda" parameters. Must
       broadcast to shape (out_dim,).
     mech_bottom_scale: Conceptually a low value for a standard error for
       predicting each mechanistic parameter, below which, extra precision is not
       critical.
       Must broadcast to shape: (out_dim,)
-    alpha_init: None or valid value from previous run, i.e. tensor of
-      (in_dim, out_dim)
     verbosity: (int) Prints some at >=1, lots at >= 2.
     bic_multiplier: (default 1.) optional overall bic scaling correction
     fudge_scale:  (default 100.) controls the extent of the quadratic part. see
       alpha_loss
+    optimizer: _bfgs_optim or something with the same signature.
 
   Returns:
     BICRunSummary
   """
+  if not isinstance(combo_params_init, ComboParams):
+    raise TypeError('combo_params_init is not a ComboParams')
+
   # the covariates.
   v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
   tf_v_orig = tf_float(v_df.values)
@@ -454,9 +497,9 @@ def do_single_bic_run(intensity_family,
   # But in the final report we'll switch back to tf_v_orig as "X".
   tf_v = (tf_v_orig - tf_v_means) / tf_v_sd
 
-  out_dim = len(intensity_family.encoded_param_names)
-  in_dim = v_df.shape[1]
-  stat_n = tf_float(len(trajectories))
+  n_trajectories, in_dim, out_dim = get_model_dims(
+      intensity_family, trajectories)
+  stat_n = tf_float(n_trajectories)
 
   # combo_n_timepoints = tf_float(np.sum(
   #     [len(t.num_new_infections_over_time) for t in trajectories]))
@@ -465,15 +508,6 @@ def do_single_bic_run(intensity_family,
   mech_logprobs = [di.get_mech_logprob() for di in di_list]
 
   try:
-    mech_params0 = list(mech_params_init)
-    assert len(mech_params0) == len(di_list)
-    intercept0 = tf.reduce_mean(tf.stack([
-        mp._x for mp in mech_params0], axis=0), axis=0)
-  except:
-    mech_params0 = [mech_params_init._x] * len(di_list)
-    intercept0 = mech_params_init._x
-  assert get_shape(intercept0) == (out_dim,)
-  try:
     tf.broadcast_to(mech_bottom_scale, (out_dim,))
   except:
     raise ValueError('mech_bottom_scale must broadcast to (out_dim,)')
@@ -481,11 +515,15 @@ def do_single_bic_run(intensity_family,
     tf.broadcast_to(penalty_scale, (out_dim,))
   except:
     raise ValueError('penalty_scale must broadcast to (out_dim,)')
-  if alpha_init is not None:
-    alpha0 = alpha_init * tf.reshape(tf_v_sd, (-1, 1))
-  else:
-    alpha0 = tf_float(np.zeros((in_dim, out_dim)))
-  combo_params0 = ComboParams(intercept0, alpha0, mech_params0)
+  # combo_params_init is in "public X" coordinates, so we must
+  # revert the "final_..." adjustments.
+  combo_params0 = ComboParams(
+      intercept=combo_params_init.intercept + tf.squeeze(
+          tf.matmul(tf_v_means / tf_v_sd,
+                    combo_params_init.alpha * tf.reshape(tf_v_sd, (-1, 1))),
+          axis=0),
+      alpha=combo_params_init.alpha * tf.reshape(tf_v_sd, (-1, 1)),
+      mech_params_raw=combo_params_init.mech_params_raw)
 
   combo_params0_flat, unravel_combo_params = ravel_pytree(combo_params0)
 
@@ -540,26 +578,11 @@ def do_single_bic_run(intensity_family,
   # val_and_grad_combo_loss(combo_params0_flat)
   # unravel_combo_params(val_and_grad_combo_loss(combo_params0_flat)[1])
 
-  if True:
-    opt1 = wrap_minimize(
-        val_and_grad_combo_loss,
-        combo_params0_flat,
-        jac=True,
-        method='L-BFGS-B', # sometimes line-search failure.
-        # method='powell', # slow but it works.
-        options={'maxiter': 10000})
-    opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
-    combo_params = unravel_combo_params(tf_float(opt1.x))
-  else:
-    opt1 = tfp.optimizer.bfgs_minimize(
-        val_and_grad_combo_loss,
-        combo_params0_flat,
-        max_iterations=10000)
-    opt_status = (not bool(opt1.converged.numpy()), float(opt1.objective_value), opt1.num_objective_evaluations, '')
-    combo_params = unravel_combo_params(tf_float(opt1.position))
+  combo_params, opt_status, opt1 = optimizer(
+      val_and_grad_combo_loss, combo_params0_flat, unravel_combo_params)
 
-  if verbosity >= 2 or not opt1.success:
-    print(*opt_status)
+  if verbosity >= 2 or (not opt_status[0] and verbosity >= 1):
+    print('optimization failure: %r' % (opt_status,))
 
   # This is the fitted linear model for "X" == tf_v.
   (intercept, alpha, mech_params_raw) = combo_params
@@ -648,3 +671,99 @@ def summarize_mech_param_fits(run1, trajectories):
     plt.ylabel(raw_param_name)
     plt.axis('equal')
     plt.show()
+
+
+def combo_params_from_inits(mech_params_init,
+                            model_dims,
+                            alpha_init=None):
+  """
+    mech_params_init: Either a single instance of a mechanistic Model fit
+      from the intensity_family, or castable to a list of them with an entry for
+      every trajectory.
+    model_dims:  (n_trajectories, in_dim, out_dim)
+    alpha_init: None or valid value from previous run, i.e. tensor of
+      (in_dim, out_dim)
+   Returns:
+     ComboParams.
+   """
+  n_trajectories, in_dim, out_dim = model_dims
+
+  try:
+    list(mech_params_init)
+    mech_init_is_list = True
+  except TypeError:
+    mech_init_is_list = False
+  if mech_init_is_list:
+    mech_params0 = list(mech_params_init)
+    if not len(mech_params0) == n_trajectories:
+      raise ValueError('mech_params_init must be a single value '
+                       'or a list of length n_trajectories.')
+    intercept0 = tf.reduce_mean(tf.stack([
+        mp._x for mp in mech_params0], axis=0), axis=0)
+  else:
+    mech_params0 = [mech_params_init._x] * n_trajectories
+    intercept0 = mech_params_init._x
+  assert get_shape(intercept0) == (out_dim,)
+  if alpha_init is not None:
+    raise NotImplementedError()
+    # alpha0 = alpha_init
+    # intercept0 = intercept0 - tf.squeeze(tf.matmul(tf_v_means / tf_v_sd, alpha0), axis=0)
+  else:
+    alpha0 = tf_float(np.zeros((in_dim, out_dim)))
+  combo_params0 = ComboParams(intercept0, alpha0, mech_params0)
+  return combo_params0
+
+
+def predefined_constant_initializer(
+    intensity_family,
+    data,
+    unused_penalty_scale,
+    unused_mech_bottom_scale,
+    **unused_kwargs):
+  model_dims = get_model_dims(intensity_family, data)
+  return combo_params_from_inits(intensity_family.params0, model_dims, alpha_init=None)
+
+
+def common_fit_initializer(
+    intensity_family,
+    data,
+    unused_penalty_scale,
+    unused_mech_bottom_scale,
+    **unused_kwargs):
+  model_dims = get_model_dims(intensity_family, data)
+  common_fit_params, _ = find_common_fit(
+      intensity_family=intensity_family, trajectories=data)
+  return combo_params_from_inits(common_fit_params, model_dims, alpha_init=None)
+
+def powell_fit_initializer(
+    intensity_family,
+    data,
+    penalty_scale,
+    mech_bottom_scale,
+    begin_with_common_fit=False,
+    **kwargs):
+  if begin_with_common_fit:
+    combo_params_init1 = common_fit_initializer(
+        intensity_family,
+        data,
+        penalty_scale,
+        mech_bottom_scale,
+        **kwargs)
+  else:
+    combo_params_init1 = predefined_constant_initializer(
+      intensity_family,
+      data,
+      penalty_scale,
+      mech_bottom_scale,
+      **kwargs)
+  result = do_single_bic_run(
+      intensity_family,
+      data,
+      combo_params_init1,
+      penalty_scale,
+      mech_bottom_scale,
+      optimizer=_powell_optim,
+      **kwargs)
+  combo_params_init2 = result.combo_params
+  return combo_params_init2
+

@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
 import scipy.optimize
+import jax
+from jax import numpy as jnp
 
 import tensorflow_probability as tfp
 
@@ -15,6 +17,10 @@ def tf_float(x):
 
 def np_float(x):
   return np.asarray(x, dtype=np.float64)
+
+
+def jnp_float(x):
+  return jnp.asarray(x, dtype=jnp.float32)
 
 
 def tf_float_star(val):
