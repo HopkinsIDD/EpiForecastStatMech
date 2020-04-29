@@ -165,7 +165,8 @@ class StatMechEstimator(Estimator):
   def fit(self, data, train_steps, time_mask_value=30, seed=42):
     # TODO(dkochkov) consider a tunable module for preprocessing.
     data["total"] = (
-        ("location", "time",), np.cumsum(data.new_infections.values, -1))
+        ("location", "time",), np.cumsum(
+            data.new_infections.transpose("location", "time").values, -1))
     num_locations = data.sizes["location"]
     self.data = data
     self.covariates = covariates = data.static_covariates.transpose(
