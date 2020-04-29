@@ -98,8 +98,9 @@ def _pack_epidemics_record_tuple(ds):
   return _EpidemicsRecord(
       np.tile(np.expand_dims(ds.time.values.astype(np.float32), 0),
               (ds.dims["location"], 1)),
-      ds.new_infections.values.astype(np.float32),
-      np.cumsum(ds.new_infections.values.astype(np.float32), axis=-1))
+      ds.new_infections.transpose("location", "time").values.astype(np.float32),
+      np.cumsum(ds.new_infections.transpose("location", "time").values.astype(
+          np.float32), axis=-1))
 
 
 def _get_time_mask(ds, min_value=30):
@@ -167,7 +168,8 @@ class StatMechEstimator(Estimator):
         ("location", "time",), np.cumsum(data.new_infections.values, -1))
     num_locations = data.sizes["location"]
     self.data = data
-    self.covariates = covariates = data.static_covariates.values
+    self.covariates = covariates = data.static_covariates.transpose(
+        "location", "static_covariate").values
     self.epidemics = epidemics = _pack_epidemics_record_tuple(data)
     self.time_mask = _get_time_mask(data, time_mask_value)
 
