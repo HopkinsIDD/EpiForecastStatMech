@@ -3,13 +3,14 @@ r"""### Viboud Chowell Model
 
 This model states that if the infected number of infections at time $t$ is given by $$E(I_t) = r Y_t^p (1-Y_t/Y_\infty)^a, $$
 
-maybe revise to this:
-$$E(I_t) = r Y_t^p (1-(Y_t/Y_\infty)^a), $$
-
 where $r,p,a$ are prameters of the model and $Y_\infty$ (aka $K$) is the total number of infections in the epidemic.
 
+This formula would better agree with Viboud-Chowell's [Zika paper](http://currents.plos.org/outbreaks/index.html%3Fp=68353.html):
+$$E(I_t) = r Y_t^p (1-(Y_t/Y_\infty)^a), $$
+
+But for the moment I'm leaving it closer to the former.
 For implementation, use:
-$$E(I_t) = \max(r Y_t^p (\max(1-Y_t/Y_\infty, 1E-6))^a, 0.1). $$
+$$E(I_t) = \max(r Y_t^p (\max(1-(Y_t/Y_\infty)^a, \epsilon)), 0.1). $$
 (The inner max avoids nan-issues; the outer keeps the prediction positive).
 """
 
@@ -17,7 +18,11 @@ from .intensity_family import IntensityFamily
 from .tf_common import *
 
 
-epsilon = np.finfo('float32').tiny
+# Choosing epsilon to be tiny is currently recommended  with a jax backend.
+# epsilon = np.finfo('float32').tiny
+# The tf backend can accomodate epsilon=0.
+#   [I think it's because of how it less rigorously handles d/dx of x**a at x=0]
+epsilon = 0.
 
 
 expit = tf.math.sigmoid
@@ -26,8 +31,10 @@ expit = tf.math.sigmoid
 def logit(p):
   return tf.math.log(p / (1. - p))
 
+
 def decode_for_a(x):
   return expit(x) * .5 + .5
+
 
 def encode_a(a):
   return logit(2. * (a - .5))
@@ -71,6 +78,9 @@ class ViboudChowellParams(object):
   def K(self):
     return tf.exp(self._x[3])
 
+  def as_tuple(self):
+    return (float(self.r), float(self.a), float(self.p), float(self.K))
+
   def __str__(self):
     return 'ViboudChowellParams(r={r}, a={a}, p={p}, K={K})'.format(
         r=self.r, a=self.a, p=self.p, K=self.K)
@@ -78,7 +88,10 @@ class ViboudChowellParams(object):
 
 def viboud_chowell_intensity_core(y, r, a, p, K):
   # y is the total prior cases
+  # This is the VC core as we implement it. Optimization runs with it.
   preds = tf.math.maximum(r * y**p * (tf.math.maximum(1 - y / K, epsilon))**a, 0.1)
+  # This is the "real" VC version. Last time I tried, my optimizer choked on it.
+  # preds = tf.math.maximum(r * y**p * (tf.math.maximum(1 - (y / K) ** a, epsilon)), 0.1)
   return preds
 
 

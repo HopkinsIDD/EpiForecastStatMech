@@ -57,7 +57,8 @@ class SparseEstimator(high_level.Estimator):
                penalty_scale_init=None,
                mech_bottom_scale=None,
                penalty_factor_grid=tuple(
-                   np.exp(np.linspace(np.log(.1), np.log(1000.), num=17)))):
+                   np.exp(np.linspace(np.log(.1), np.log(1000.), num=17))),
+               optimizer=sparse._lbfgs_optim):
     self.intensity_family = intensity_family
     self.initializer = initializer
     n_mech_params = len(intensity_family.encoded_param_names)
@@ -72,8 +73,11 @@ class SparseEstimator(high_level.Estimator):
     self.penalty_factor_grid = sorted(penalty_factor_grid)
     self.run_map = collections.OrderedDict()
     self.initialize_from_last_fit = True
+    self.optimizer = optimizer
 
-  def run_one_bic(self, penalty_scale, verbosity=1):
+  def run_one_bic(self, penalty_scale, optimizer=None, verbosity=1):
+    if optimizer is None:
+      optimizer = self.optimizer
     result = sparse.do_single_bic_run(
         intensity_family=self.intensity_family,
         trajectories=self.data,
@@ -82,7 +86,8 @@ class SparseEstimator(high_level.Estimator):
         mech_bottom_scale=self.mech_bottom_scale,
         verbosity=verbosity,
         bic_multiplier=1.,
-        fudge_scale=100.)
+        fudge_scale=100.,
+        optimizer=optimizer)
     self.run_map[tuple(np_float(penalty_scale))] = result
     return result
 
@@ -149,6 +154,24 @@ class SparseEstimator(high_level.Estimator):
     return self
 
   @property
+  def static_covariate_df(self):
+    v_df = sparse._get_covariate_df(self.data)
+    return v_df
+
+  @property
+  def alpha(self):
+    """Return the linear model coefficients as an xarray.DataArray."""
+    return xarray.DataArray(
+        sparse._get_alpha_df(self.combo_params.alpha, self.static_covariate_df,
+                             self.intensity_family))
+
+  @property
+  def intercept(self):
+    return xarray.DataArray(
+        sparse._get_intercept_s(self.combo_params.intercept,
+                                self.intensity_family))
+
+  @property
   def mech_params_tf_stack(self):
     """Note: this is the raw params in the encoding of ef.viboud_chowell."""
     self._check_fitted()
@@ -157,17 +180,12 @@ class SparseEstimator(high_level.Estimator):
   @property
   def mech_params_df(self):
     self._check_fitted()
-    assert self.intensity_family.name == 'Viboud-Chowell', 'only VC implemented'
     accum = []
     for mp in self.combo_params.mech_params_raw:
       wrapped_mp = self.intensity_family.params_wrapper().reset(mp)
-      accum.append((
-          float(wrapped_mp.r),
-          float(wrapped_mp.a),
-          float(wrapped_mp.p),
-          float(wrapped_mp.K)))
+      accum.append(wrapped_mp.as_tuple())
     return pd.DataFrame(accum,
-                        columns = ('r', 'a', 'p', 'K'),
+                        columns = self.intensity_family.param_names,
                         index=self.data.location.to_index())
 
   @property

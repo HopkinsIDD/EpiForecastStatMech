@@ -324,23 +324,27 @@ def make_demo_intensity_list(intensity_family, trajectories, align_time_to_first
   return accum
 
 
-def find_common_fit(intensity_family, trajectories):
+def find_common_fit(intensity_family, trajectories, use_nelder_mead=False):
   di_list = make_demo_intensity_list(intensity_family, trajectories)
   mech_logprobs = [di.get_mech_logprob() for di in di_list]
   neg_sum_mech_logprobs = lambda params: -tf.reduce_sum(
       tf.stack([lp(params) for lp in mech_logprobs]))
 
-  opt1 = wrap_minimize(
-      neg_sum_mech_logprobs,
-      intensity_family.params0._x,
-      method='nelder-mead',
-      options={'maxiter': 10000})
-
-  common_fit_params = intensity_family.params_wrapper().reset(opt1.x)
-  print(opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  unravel = lambda x: intensity_family.params_wrapper().reset(x)
+  if use_nelder_mead:
+    opt1 = wrap_minimize(
+        neg_sum_mech_logprobs,
+        intensity_family.params0._x,
+        method='nelder-mead',
+        options={'maxiter': 10000})
+    common_fit_params = unravel(opt1.x)
+    opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  else:
+    val_and_grad_common_mech_loss = make_value_and_grad(neg_sum_mech_logprobs)
+    common_fit_params, opt_status, opt1 = _lbfgs_optim(
+      val_and_grad_common_mech_loss, intensity_family.params0._x, unravel)
+  print(*opt_status)
   print(common_fit_params)
-  # for di in di_list:
-  #   di.set_fitted_params(common_fit_params).do_plot()
   return common_fit_params, di_list
 
 
@@ -390,14 +394,14 @@ class BICRunSummary(
 
 
 def get_model_dims(intensity_family, trajectories):
-  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
+  v_df = _get_static_covariate_df(trajectories)
   out_dim = len(intensity_family.encoded_param_names)
   in_dim = v_df.shape[1]
   n_trajectories = v_df.shape[0]
   return n_trajectories, in_dim, out_dim
 
 
-def _bfgs_optim(f, x0, unravel_func, max_iter=10000):
+def _lbfgs_optim(f, x0, unravel_func, max_iter=10000):
   opt1 = wrap_minimize(
       f,
       x0,
@@ -431,6 +435,35 @@ def _tfp_lbfgs_optim(f, x0, unravel_func, max_iter=10000):
   return x, opt_status, opt1
 
 
+def _adam_optim(f, x0, unravel_func, learning_rate=1E-2, max_iter=10000, verbose=1):
+  opt = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+  x = tf.Variable(x0)
+  for i in range(max_iter):
+    loss, grad = f(x)
+    opt.apply_gradients([(grad, x)])
+    if verbose and i % 500 == 0:
+      print(i, float(loss), float(tf.math.sqrt(tf.reduce_sum(grad ** 2))))
+  opt_status = (True, float(loss), max_iter, '')
+  opt1 = DummyData()
+  opt1.x = x
+  x = unravel_func(x)
+  return x, opt_status, opt1
+
+
+def _get_static_covariate_df(trajectories):
+  """The (static) covariate matrix."""
+  raw_v_df = (
+      trajectories.static_covariates.reset_coords(drop=True).transpose(
+          'location', 'static_covariate').to_pandas())
+  # This can then be used with, e.g. patsy.
+  # expanded_v_df = patsy(raw_v_df, ...patsy details...)
+  # Optionally it can be converted back to xa using.
+  #  expanded_v_xa = xarray.DataArray(expanded_v_df)
+  # for now...
+  v_df = raw_v_df
+  return v_df
+
+
 def do_single_bic_run(intensity_family,
                       trajectories,
                       combo_params_init,
@@ -439,7 +472,7 @@ def do_single_bic_run(intensity_family,
                       verbosity=1,
                       bic_multiplier=1.,
                       fudge_scale=100.,
-                      optimizer=_bfgs_optim):
+                      optimizer=_lbfgs_optim):
   """Find a sparseness penalized alpha and bic score it.
 
   Note about the BIC calculations:
@@ -479,7 +512,7 @@ def do_single_bic_run(intensity_family,
     bic_multiplier: (default 1.) optional overall bic scaling correction
     fudge_scale:  (default 100.) controls the extent of the quadratic part. see
       alpha_loss
-    optimizer: _bfgs_optim or something with the same signature.
+    optimizer: _lbfgs_optim or something with the same signature.
 
   Returns:
     BICRunSummary
@@ -487,8 +520,8 @@ def do_single_bic_run(intensity_family,
   if not isinstance(combo_params_init, ComboParams):
     raise TypeError('combo_params_init is not a ComboParams')
 
-  # the covariates.
-  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
+  v_df = _get_static_covariate_df(trajectories)
+
   tf_v_orig = tf_float(v_df.values)
   tf_v_means = tf.reduce_mean(tf_v_orig, axis=0, keepdims=True)
   tf_v_sd = tf.reshape(tf_float(v_df.std(axis=0, ddof=1)), (1, -1))
@@ -582,7 +615,7 @@ def do_single_bic_run(intensity_family,
       val_and_grad_combo_loss, combo_params0_flat, unravel_combo_params)
 
   if verbosity >= 2 or (not opt_status[0] and verbosity >= 1):
-    print('optimization failure: %r' % (opt_status,))
+    print('optimization status: %r' % (opt_status,))
 
   # This is the fitted linear model for "X" == tf_v.
   (intercept, alpha, mech_params_raw) = combo_params
@@ -620,19 +653,34 @@ def do_single_bic_run(intensity_family,
 
   if verbosity >= 1:
     print(
-        float(combo_result.combined_bic), np_float(penalty_scale),
-        np_float(combo_result.stat_bic), np_float(combo_result.mech_log_prob))
+        float(combo_result.combined_bic),
+        float(tf.reduce_sum(combo_result.soft_degrees_of_freedom)),
+        np_float(penalty_scale), np_float(combo_result.stat_bic),
+        np_float(combo_result.mech_log_prob))
 
   return BICRunSummary(combo_result, final_combo_params, mech_params_stack,
                        mech_params_hat_stack, intensity_family, penalty_scale,
                        opt_status)
 
+def _get_intercept_s(intercept, intensity_family):
+  return pd.Series(intercept, index=pd.Index(
+          intensity_family.encoded_param_names, name='encoded_param'))
+
+
+def _get_alpha_df(alpha, v_df, intensity_family):
+  alpha_df = pd.DataFrame(
+      np_float(alpha),
+      index=v_df.columns,
+      columns=pd.Index(
+          intensity_family.encoded_param_names, name='encoded_param'))
+  return alpha_df
+
+
 def summarize_mech_param_fits(run1, trajectories):
-  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
+  v_df = _get_static_covariate_df(trajectories)
   intensity_family = run1.intensity_family
   (intercept, alpha, mech_params_raw) = run1.combo_params
-  alpha_df = pd.DataFrame(
-      np_float(alpha), index=v_df.columns, columns=intensity_family.encoded_param_names)
+  alpha_df = _get_alpha_df(alpha, v_df, intensity_family)
   mech_params_stack = run1.mech_params_stack
   mech_params_hat_stack = run1.mech_params_hat_stack
 
@@ -735,6 +783,7 @@ def common_fit_initializer(
       intensity_family=intensity_family, trajectories=data)
   return combo_params_from_inits(common_fit_params, model_dims, alpha_init=None)
 
+
 def powell_fit_initializer(
     intensity_family,
     data,
@@ -766,4 +815,3 @@ def powell_fit_initializer(
       **kwargs)
   combo_params_init2 = result.combo_params
   return combo_params_init2
-
