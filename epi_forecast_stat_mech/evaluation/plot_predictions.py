@@ -17,8 +17,8 @@ def plot_rollout_samples(predictions, model_to_plot, location_to_plot):
 
   Args:
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, model). Where model is the Estimator used
-      to generate the predicted new_infections.
+      dimensions of (location, time, sample, model). Where model is the
+       Estimator used to generate the predicted new_infections.
     model_to_plot: The coordinate name of the model that you want to plot.
     location_to_plot: The coordinate integer of the location that you want to
       plot.
@@ -53,8 +53,8 @@ def plot_std_dev(predictions, model_to_plot, location_to_plot, num_stddevs=3):
 
   Args:
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, model). Where model is the Estimator used
-      to generate the predicted new_infections.
+      dimensions of (location, time, sample, model). Where model is the
+       Estimator used to generate the predicted new_infections.
     model_to_plot: The coordinate name of the model that you want to plot.
     location_to_plot: The coordinate integer of the location that you want to
       plot.
@@ -86,8 +86,8 @@ def plot_observed_data(data_inf, predictions, location_to_plot):
     data_inf: an xr.DataArray representing the *true* new_infections with
       dimensions of (location, time).
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, model). Where model is the Estimator used
-      to generate the predicted new_infections.
+      dimensions of (location, time, sample, model). Where model is the
+       Estimator used to generate the predicted new_infections.
     location_to_plot: The coordinate integer of the location that you want to
       plot.
   Returns:
@@ -112,8 +112,8 @@ def plot_ground_truth_data(data_inf, predictions, location_to_plot):
     data_inf: an xr.DataArray representing the *true* new_infections with
       dimensions of (location, time).
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, model). Where model is the Estimator used
-      to generate the predicted new_infections.
+      dimensions of (location, time, sample, model). Where model is the
+       Estimator used to generate the predicted new_infections.
     location_to_plot: The coordinate integer of the location that you want to
       plot.
   Returns:
@@ -141,8 +141,8 @@ def plot_one_model_predictions(data_inf,
     data_inf: an xr.DataArray representing the *true* new_infections with
       dimensions of (location, time).
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, model). Where model is the Estimator used
-      to generate the predicted new_infections.
+      dimensions of (location, time, sample, model). Where model is the
+       Estimator used to generate the predicted new_infections.
     model_to_plot: The coordinate name of the model that you want to plot.
     location_to_plot: The coordinate integer of the location that you want to
       plot.
@@ -177,8 +177,8 @@ def plot_many_model_predictions(data_inf,
     data_inf: an xr.DataArray representing the *true* new_infections with
       dimensions of (location, time).
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, model). Where model is the Estimator used
-      to generate the predicted new_infections.
+      dimensions of (location, time, sample, model). Where model is the
+       Estimator used to generate the predicted new_infections.
     model_type_to_plot: The name of the model_type that you want to plot. Must
       be in plot_constants.model_type.keys().
     location_to_plot: The coordinate integer of the location that you want to
