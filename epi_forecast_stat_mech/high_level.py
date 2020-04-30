@@ -2,6 +2,7 @@
 """A high level modeling interface for wrapping models & fitting procedures."""
 import collections
 import dataclasses
+import functools
 import logging
 from typing import TypeVar
 
@@ -118,6 +119,7 @@ class StatMechEstimator(Estimator):
       default_factory=network_models.NormalDistributionModel)
   mech_model: mechanistic_models.MechanisticModel = dataclasses.field(
       default_factory=mechanistic_models.ViboudChowellModel)
+  fused_train_steps: int = 100
 
   def _log_likelihoods(
       self,
@@ -174,17 +176,13 @@ class StatMechEstimator(Estimator):
     self.epidemics = epidemics = _pack_epidemics_record_tuple(data)
     self.time_mask = _get_time_mask(data, time_mask_value)
 
-    #
     # Mechanistic model initialization
-    #
     mech_params = jnp.stack([
         self.mech_model.init_parameters() for _ in range(num_locations)])
     observations = jax.vmap(self.mech_model.epidemic_observables)(
         mech_params, epidemics)
 
-    #
     # Statistical model initialization
-    #
     rng = jax.random.PRNGKey(seed)
     stat_params = self.stat_model.init_parameters(rng, covariates, observations)
     init_params = (stat_params, mech_params)
@@ -209,10 +207,25 @@ class StatMechEstimator(Estimator):
       opt_state = opt_update(step, grad, opt_state)
       return opt_state, loss_value
 
-    for step in range(train_steps):
-      opt_state, loss_value = train_step(step, opt_state)
+    # For some of these models (especially on accelerators), a single training
+    # step runs very quickly. Fusing steps together considerably improves
+    # performance.
+    @functools.partial(jax.jit, static_argnums=(1,))
+    def repeated_train_step(step, repeats, opt_state):
+      def f(carray, _):
+        step, opt_state, _ = carray
+        opt_state, loss_value = train_step(step, opt_state)
+        return (step + 1, opt_state, loss_value), None
+      (_, opt_state, loss_value), _ = jax.lax.scan(
+          f, (step, opt_state, 0.0), xs=None, length=repeats)
+      return opt_state, loss_value
+
+    for step in range(0, train_steps, self.fused_train_steps):
+      opt_state, loss_value = repeated_train_step(
+          step, self.fused_train_steps, opt_state)
       if step % 1000 == 0:
         logging.info(f"Loss at step {step} is: {loss_value}.")  # pylint: disable=logging-format-interpolation
+
     self.params_ = get_params(opt_state)
     self._is_trained = True
     return self
