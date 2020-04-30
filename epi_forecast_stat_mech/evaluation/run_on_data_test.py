@@ -50,28 +50,5 @@ class TestRunOnData(absltest.TestCase):
     np.testing.assert_array_equal(data.location, train_data.location)
     np.testing.assert_array_equal(data.location, test_data.location)
 
-  def test_TrainModel(self):
-    # very similar to test_high_level
-    split_args = (20,)
-    split_function = run_on_data.train_test_split_time
-    data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
-    data = data.squeeze('sample')
-    estimator = high_level.StatMechEstimator()
-    predictions = run_on_data.train_model(
-        data, estimator, split_function, split_args)
-    self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, 100-split_args[0])
-    np.testing.assert_array_equal(data.location, predictions.location)
-
-  def test_EvaluateModel(self):
-    predictions = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
-    data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
-    partial_func = functools.partial(sim_metrics.peak_size_error,
-                                     data.new_infections)
-    metric_dict = {'peak': partial_func}
-    eval_data = run_on_data.evaluate_model(predictions, metric_dict)
-    self.assertLen(eval_data.time, 100)
-
-
 if __name__ == '__main__':
   absltest.main()
