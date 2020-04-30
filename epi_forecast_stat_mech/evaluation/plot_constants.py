@@ -44,6 +44,22 @@ model_colors = {
         'color': '#101010',
         'linestyle': 'dashed'
     },
+    'rtlive': {
+        'color': '#55FFFF',
+        'linestyle': 'solid'
+    },
+    'sparse_classic': {
+        'color': '#DD0000',
+        'linestyle': ':'
+    },
+    'iterative_median': {
+        'color': '#00DD00',
+        'linestyle': ':'
+    },
+    'iterative_randomforest': {
+        'color': '#0000DD',
+        'linestyle': ':'
+    },
 }
 
 model_types = {
