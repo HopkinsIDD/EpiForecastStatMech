@@ -12,7 +12,8 @@ import jax
 from jax import numpy as jnp
 
 from epi_forecast_stat_mech import data_model
-from epi_forecast_stat_mech import high_level
+from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech import stat_mech_estimator
 from epi_forecast_stat_mech import sparse
 from epi_forecast_stat_mech import viboud_chowell
 from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
@@ -49,7 +50,7 @@ def mech_model_class_from_intensity_family(intensity_family):
     raise ValueError('%s is not implemented in mechanistic_models' % model_name)
 
 
-class SparseEstimator(high_level.Estimator):
+class SparseEstimator(estimator_base.Estimator):
 
   def __init__(self,
                intensity_family=viboud_chowell.ViboudChowellFamily,
@@ -234,7 +235,7 @@ class SparseEstimator(high_level.Estimator):
   @property
   def epidemics(self):
     self._check_fitted()
-    return high_level._pack_epidemics_record_tuple(self.data.fillna(0))
+    return stat_mech_estimator._pack_epidemics_record_tuple(self.data.fillna(0))
 
   def _check_fitted(self):
     if not hasattr(self, 'combo_params'):

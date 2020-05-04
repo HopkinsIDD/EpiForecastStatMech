@@ -1,14 +1,15 @@
 # Lint as: python3
 """A rolled out version of the rt.live model."""
 
-from epi_forecast_stat_mech import high_level
+from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
 import numpy as np
 import pandas as pd
 import scipy.stats as sps
 import xarray as xr
 
 
-class RtLiveEstimator(high_level.Estimator):
+class RtLiveEstimator(estimator_base.Estimator):
   """A rolled out version of the rt.live model, following github implementation.
 
   See https://github.com/k-sys/covid-19/blob/master/Realtime%20R0.ipynb.
@@ -95,6 +96,7 @@ class RtLiveEstimator(high_level.Estimator):
     return pd.DataFrame(posterior, index=self.r_t_range, columns=sr.columns)
 
   def fit(self, observations: xr.Dataset):
+    data_model.validate_data(observations, require_no_samples=True)
     sr = observations['new_infections'].to_pandas().T
     sr = self._prepare_cases(sr)
     self.posterior = self._get_posterior(sr)
