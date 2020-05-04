@@ -1,12 +1,16 @@
-import numpy as np
-import tensorflow as tf
-import scipy.optimize
 import jax
 from jax import numpy as jnp
+import numpy as np
+import scipy.optimize
+import tensorflow as tf
 
-import tensorflow_probability as tfp
+# This is really only necessary on certain kernels which seem to have turned
+# eager off for some reason.
+tf.compat.v1.enable_eager_execution()
+assert tf.executing_eagerly(), 'Eager mode tf required.'
 
 # Standard TFP Imports
+import tensorflow_probability as tfp
 tfd = tfp.distributions
 tfb = tfp.bijectors
 
