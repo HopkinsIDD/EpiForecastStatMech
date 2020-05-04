@@ -11,12 +11,12 @@ import tensorflow as tf
 import jax
 from jax import numpy as jnp
 
+from epi_forecast_stat_mech import data_model
 from epi_forecast_stat_mech import high_level
 from epi_forecast_stat_mech import sparse
 from epi_forecast_stat_mech import viboud_chowell
 from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
-
 
 
 def tf_float(x):
@@ -93,6 +93,7 @@ class SparseEstimator(high_level.Estimator):
 
   def fit(self,
           data):
+    data_model.validate_data(data, require_no_samples=True)
     self.data = data
     intensity_family = self.intensity_family
     initializer = self.initializer
@@ -185,7 +186,7 @@ class SparseEstimator(high_level.Estimator):
       wrapped_mp = self.intensity_family.params_wrapper().reset(mp)
       accum.append(wrapped_mp.as_tuple())
     return pd.DataFrame(accum,
-                        columns = self.intensity_family.param_names,
+                        columns=self.intensity_family.param_names,
                         index=self.data.location.to_index())
 
   @property
@@ -209,7 +210,8 @@ class SparseEstimator(high_level.Estimator):
     self._check_fitted()
     di_list = sparse.make_demo_intensity_list(self.intensity_family, self.data)
     accum = collections.OrderedDict()
-    for mp, di, loc_x in zip(self.combo_params.mech_params_raw, di_list, self.data.location):
+    for mp, di, loc_x in zip(self.combo_params.mech_params_raw, di_list,
+                             self.data.location):
       # TODO(): fix this str business.
       loc = str(loc_x.data)
       wrapped_mp = self.intensity_family.params_wrapper().reset(mp)

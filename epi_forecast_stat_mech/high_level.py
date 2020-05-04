@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import xarray
 
+from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
@@ -165,6 +166,7 @@ class StatMechEstimator(Estimator):
         stat_log_likelihood=statistical_log_likelihood)
 
   def fit(self, data, train_steps, time_mask_value=30, seed=42):
+    data_model.validate_data(data, require_no_samples=True)
     # TODO(dkochkov) consider a tunable module for preprocessing.
     data["total"] = (
         ("location", "time",), np.cumsum(
