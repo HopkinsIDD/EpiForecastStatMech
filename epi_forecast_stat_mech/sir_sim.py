@@ -9,6 +9,8 @@ import xarray as xr
 # Beta, or the growth rate of the infection, depends on the covariates.
 # Here we implement three different functional forms for the dependency.
 
+SPLIT_TIME = 100
+
 
 def generate_betas_from_single_random_covariate(num_locations):
   """Beta depend on a single covariate that is randomly generated.
@@ -111,8 +113,14 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
       covariates for each location and representing the simulation parameters.
       All datavalues are initialized to 0.
   """
+  if num_time_steps < SPLIT_TIME:
+    raise ValueError('num_time_steps must be at least %d' % (SPLIT_TIME,))
   ds = data_model.new_model(num_samples, num_locations, num_time_steps,
                             num_static_covariates, num_dynamic_covariates)
+  ds['canonical_split_time'] = SPLIT_TIME
+  ds['canonical_split_time'].attrs['description'] = (
+      'Int representing the canonical time at which to split the data.')
+
   ds['static_weights'] = data_model.new_dataarray(
       {'static_covariate': num_static_covariates})
 
@@ -125,11 +133,21 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
   ds['population_size'].attrs[
       'description'] = 'Int representing the population size in each location.'
 
-  # TODO(edklein) should start_time be a covariate?
-  ds['start_time'] = data_model.new_dataarray({'location': num_locations})
-  ds['start_time'].attrs[
-      'description'] = ('Int representing the infection start time at each'
-                        'location')
+  ds['fraction_infected'] = data_model.new_dataarray({
+      'sample': num_samples,
+      'location': num_locations
+  })
+  ds['fraction_infected'].attrs['description'] = (
+      'Float representing the fraction of the population '
+      'infected at the day %d.' % (SPLIT_TIME,))
+
+  ds['start_time'] = data_model.new_dataarray({
+      'sample': num_samples,
+      'location': num_locations
+  })
+  ds['start_time'].attrs['description'] = (
+      'Int representing the infection start time at each'
+      'sample x location')
 
   ds['recovery_rate'] = data_model.new_dataarray({'location': num_locations})
   ds['recovery_rate'].attrs[
@@ -244,9 +262,9 @@ def generate_simulations(gen_beta_fn,
                          num_samples,
                          num_locations,
                          num_time_steps=500,
-                         range_start_time=(0, 50),
                          constant_gamma=0.33,
-                         constant_pop_size=10000):
+                         constant_pop_size=10000,
+                         fraction_infected_limits=(.05, 1.)):
   """Generate many samples of SIR curves.
 
   Generate many SIR curves. Each sample contains num_locations.
@@ -263,12 +281,12 @@ def generate_simulations(gen_beta_fn,
       sample
     num_time_steps: an int representing the number of simulation 'days'
       (default 500)
-    range_start_time: a tuple of ints representing the min and max start time of
-      each epidemic in simulation days. Default (0, 50)
     constant_gamma: a float representing the constant recovery rate (default
       0.33)
     constant_pop_size: an int representing the constant population size (default
       10000)
+    fraction_infected_limits: A pair of floats in [0, 1] representing the limits
+      on the fraction of the population that will be infected at SPLIT_TIME.
 
   Returns:
     trajectories: a xr.Dataset of the simulated infections over time
@@ -291,16 +309,38 @@ def generate_simulations(gen_beta_fn,
       num_locations)
   trajectories['recovery_rate'].data = constant_gamma * np.ones(num_locations)
 
-  # randomly generate the start times of each infection
-  min_start_time = max(range_start_time[0], 0)
-  max_start_time = min(range_start_time[1], num_time_steps)
-
-  trajectories['start_time'].data = np.random.randint(
-      min_start_time, max_start_time, num_locations)
-
+  # Randomly generate the fraction of infected people for each
+  # sample and location.
+  trajectories['fraction_infected'].data = np.random.uniform(
+      fraction_infected_limits[0], fraction_infected_limits[1],
+      (num_samples, num_locations))
+  # Initially, all trajectories start at time 0.
+  # The actual start_time will be updated to be consistent with
+  # fraction_infected being infected at SPLIT_TIME.
+  dummy_start_time = np.zeros((num_locations,), dtype=np.int32)
   trajectories['new_infections'] = generate_ground_truth(
-      trajectories.population_size, trajectories.start_time,
-      trajectories.growth_rate, trajectories.recovery_rate,
-      trajectories.sizes['sample'], trajectories.sizes['time'])
+      trajectories.population_size, dummy_start_time, trajectories.growth_rate,
+      trajectories.recovery_rate, trajectories.sizes['sample'],
+      trajectories.sizes['time'])
+  cases = trajectories.new_infections.cumsum('time')
+  trajectories['final_size'] = final_size = cases.isel(time=-1)
+  target_cases = (trajectories['fraction_infected'] *
+                  trajectories['final_size']).round()
+  hit_times = np.apply_along_axis(
+      lambda x: np.where(x)[0][0], axis=-1, arr=cases >= target_cases)
+  shifts = SPLIT_TIME - hit_times
 
+  old_ni = trajectories.new_infections
+  shifted_new_infections = xr.concat([
+      xr.concat([
+          old_ni.isel(sample=j, location=k).shift(
+              time=shifts[j, k], fill_value=0)
+          for k in range(old_ni.sizes['location'])
+      ],
+                dim='location')
+      for j in range(old_ni.sizes['sample'])
+  ],
+                                     dim='sample')
+  trajectories['new_infections'] = shifted_new_infections
+  trajectories['start_time'].data = shifts
   return trajectories
