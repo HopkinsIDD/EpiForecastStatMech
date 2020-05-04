@@ -163,18 +163,9 @@ class ViboudChowellModel(MechanisticModel):
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
-    def _log_prob_step(cumulative_cases, new_cases):
-      intensity = self.intensity(parameters, cumulative_cases)
-      log_prob = jnp.squeeze(
-          self.new_infection_distribution(intensity).log_prob(new_cases))
-      return cumulative_cases + new_cases, log_prob
-
-    start_cases = epidemics.cumulative_infections[0]
+    intensity = self.intensity(parameters, epidemics.cumulative_infections[:-1])
     trajectory = epidemics.infections_over_time[1:]
-    _, log_probs = jax.lax.scan(_log_prob_step, start_cases, trajectory)
-    # we include 0 to indicate that we treat the first step as given.
-    # Note: this might make log-likelihood unfair compared to other models that
-    # are evaluated on the first step as well.
+    log_probs = self.new_infection_distribution(intensity).log_prob(trajectory)
     return jnp.concatenate([jnp.zeros(1), log_probs])
 
   def predict(
@@ -260,15 +251,9 @@ class GaussianModel(MechanisticModel):
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
-    def _log_prob_step(t, new_cases):
-      intensity = self.intensity(parameters, t)
-      log_prob = jnp.squeeze(
-          self.new_infection_distribution(intensity).log_prob(new_cases))
-      return t + 1, log_prob
-
-    init_time = epidemics.t[0]
+    intensity = self.intensity(parameters, epidemics.t)
     trajectory = epidemics.infections_over_time
-    _, log_probs = jax.lax.scan(_log_prob_step, init_time, trajectory)
+    log_probs = self.new_infection_distribution(intensity).log_prob(trajectory)
     return log_probs
 
   def predict(
