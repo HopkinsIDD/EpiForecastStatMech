@@ -213,8 +213,7 @@ class SparseEstimator(estimator_base.Estimator):
     accum = collections.OrderedDict()
     for mp, di, loc_x in zip(self.combo_params.mech_params_raw, di_list,
                              self.data.location):
-      # TODO(): fix this str business.
-      loc = str(loc_x.data)
+      loc = loc_x.data.item()
       wrapped_mp = self.intensity_family.params_wrapper().reset(mp)
       di.set_fitted_params(wrapped_mp)
       accum[loc] = di
