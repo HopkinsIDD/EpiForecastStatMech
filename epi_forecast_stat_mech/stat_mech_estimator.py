@@ -54,11 +54,14 @@ def _get_time_mask(ds, min_value=30):
 class StatMechEstimator(estimator_base.Estimator):
   """A place-holder model that uses a mixed statistical/mechanistic approach."""
 
+  train_steps: int
   stat_model: stat_base.StatisticalModel = dataclasses.field(
       default_factory=network_models.NormalDistributionModel)
   mech_model: mechanistic_models.MechanisticModel = dataclasses.field(
       default_factory=mechanistic_models.ViboudChowellModel)
   fused_train_steps: int = 100
+  time_mask_value: int = 30
+  fit_seed: int = 42
 
   def _log_likelihoods(
       self,
@@ -103,7 +106,10 @@ class StatMechEstimator(estimator_base.Estimator):
         mech_log_likelihood=mechanistic_log_likelihood,
         stat_log_likelihood=statistical_log_likelihood)
 
-  def fit(self, data, train_steps, time_mask_value=30, seed=42):
+  def fit(self, data):
+    train_steps = self.train_steps
+    time_mask_value = self.time_mask_value
+    seed = self.fit_seed
     data_model.validate_data(data, require_no_samples=True)
     # TODO(dkochkov) consider a tunable module for preprocessing.
     data["total"] = (

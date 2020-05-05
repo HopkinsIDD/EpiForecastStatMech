@@ -36,8 +36,8 @@ def create_synthetic_dataset(
   return trajectories
 
 
-class TestHighLevel(absltest.TestCase):
-  """Tests for high_level module."""
+class TestHighLevelStatMech(absltest.TestCase):
+  """Tests for StatMech high_level module."""
 
   def test_StatMechEstimator(self):
     """Verify we can fit and predict from StatMechEstimator."""
@@ -45,13 +45,17 @@ class TestHighLevel(absltest.TestCase):
     num_samples = 11
 
     data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
-    estimator = high_level.StatMechEstimator().fit(data, train_steps=1000)
+    estimator = high_level.StatMechEstimator(train_steps=1000).fit(data)
 
     predictions = estimator.predict(prediction_length, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
     self.assertLen(predictions.time, prediction_length)
     np.testing.assert_array_equal(data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
+
+
+class TestHighLevelRtLive(absltest.TestCase):
+  """Tests for RtLive high_level module."""
 
   def test_RtLiveEstimator(self):
     """Verify we can fit and predict from RtLiveEstimator."""
@@ -67,19 +71,9 @@ class TestHighLevel(absltest.TestCase):
     np.testing.assert_array_equal(data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
 
-  def test_SparseEstimator(self):
-    """Verify we can fit and predict from SparseEstimator."""
-    prediction_length = 10
-    num_samples = 11
 
-    data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
-    estimator = high_level.StatMechEstimator().fit(data, train_steps=1000)
-
-    predictions = estimator.predict(prediction_length, num_samples)
-    self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, prediction_length)
-    np.testing.assert_array_equal(data.location, predictions.location)
-    self.assertLen(predictions.sample, num_samples)
+class TestHighLevelIterativeEstimator(absltest.TestCase):
+  """Tests for Iterative high_level module."""
 
   def test_IterativeEstimator(self):
     """Verify we can fit and predict from IterativeEstimator."""
