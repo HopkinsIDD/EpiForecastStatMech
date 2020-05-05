@@ -13,6 +13,7 @@ from jax import numpy as jnp
 
 from epi_forecast_stat_mech import data_model
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech import gaussian
 from epi_forecast_stat_mech import stat_mech_estimator
 from epi_forecast_stat_mech import sparse
 from epi_forecast_stat_mech import viboud_chowell
@@ -47,7 +48,7 @@ def mech_model_class_from_intensity_family(intensity_family):
   elif model_name == 'Gaussian':
     return mechanistic_models.GaussianModel
   else:
-    raise ValueError('%s is not implemented in mechanistic_models' % model_name)
+    raise NotImplementedError('%s is not implemented in mechanistic_models' % model_name)
 
 
 class SparseEstimator(estimator_base.Estimator):
@@ -192,10 +193,20 @@ class SparseEstimator(estimator_base.Estimator):
 
   @property
   def mech_params_for_jax_code(self):
-    assert self.intensity_family.name == 'Viboud-Chowell', 'only VC implemented'
     mech_params_df = self.mech_params_df
-    return jnp_float(np_float(
-        tf.math.log(mech_params_df.values)))
+    if self.intensity_family.name == 'Viboud-Chowell':
+      return jnp_float(np_float(
+          np.log(mech_params_df.values)))
+    elif self.intensity_family.name == 'Gaussian':
+      return jnp_float(
+          np.concatenate((
+              mech_params_df.values[:, [0]],
+              np.log(mech_params_df.values[:, 1:])), axis=1))
+    else:
+      raise NotImplementedError('%s is not implemented.' %
+                                self.intensity_family.name)
+
+
 
   def summarize_fit_params(self):
     self._check_fitted()
@@ -268,3 +279,11 @@ class SparseEstimator(estimator_base.Estimator):
         predictions,
         coords=[location, sample, time],
         dims=['location', 'sample', 'time']).rename('new_infections')
+
+
+def get_estimator_dict():
+  estimator_dict = {}
+  estimator_dict['sparse_classic'] = SparseEstimator()
+  # estimator_dict['sparse_guassian'] = SparseEstimator(
+  #     intensity_family=gaussian.GaussianFamily)
+  return estimator_dict

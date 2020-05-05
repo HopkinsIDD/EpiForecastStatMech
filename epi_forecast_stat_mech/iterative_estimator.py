@@ -251,3 +251,13 @@ def lbfgs_optim(f, x0, max_iter=10000):
       jac=True,
       method='L-BFGS-B',  # sometimes line-search failure.
       options={'maxiter': max_iter})
+
+
+def get_estimator_dict():
+  estimator_dict = {}
+  estimator_dict['iterative_randomforest'] = IterativeEstimator()
+  mean_estimators = collections.defaultdict(
+      lambda: sklearn.dummy.DummyRegressor(strategy='mean'))
+  estimator_dict['iterative_mean'] = IterativeEstimator(
+      stat_estimators=mean_estimators)
+  return estimator_dict

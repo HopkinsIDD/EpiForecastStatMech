@@ -52,6 +52,10 @@ model_colors = {
         'color': '#DD0000',
         'linestyle': ':'
     },
+    'sparse_gaussian': {
+        'color': '#880000',
+        'linestyle': ':'
+    },
     'iterative_mean': {
         'color': '#00DD00',
         'linestyle': ':'

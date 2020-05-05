@@ -3,14 +3,18 @@
 import collections
 import dataclasses
 import functools
+import itertools
 import logging
-from typing import TypeVar
 
 import jax
 from jax.experimental import optimizers
 import jax.numpy as jnp
 import numpy as np
 import xarray
+
+import tensorflow_probability
+tfp = tensorflow_probability.experimental.substrates.jax
+tfd = tfp.distributions
 
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
@@ -200,3 +204,52 @@ class StatMechEstimator(estimator_base.Estimator):
         predictions,
         coords=[location, sample, time],
         dims=["location", "sample", "time"]).rename("new_infections")
+
+
+def laplace_prior(parameters, scale_parameter=1.):
+  return jax.tree_map(
+      lambda x: tfd.Laplace(
+          loc=jnp.zeros_like(x), scale=scale_parameter * jnp.ones_like(x)).
+      log_prob(x), parameters)
+
+
+def get_estimator_dict(
+    train_steps=100000,
+    fused_train_steps=100,
+    time_mask_value=50,
+    fit_seed=42,
+    list_of_prior_fns=(None, laplace_prior),
+    list_of_mech_models=(mechanistic_models.ViboudChowellModel,
+                         mechanistic_models.GaussianModel),
+    list_of_stat_module=(network_models.LinearModule,
+                         network_models.PerceptronModule),
+    list_of_prior_names=("None", "Laplace"),
+    list_of_mech_names=("vc", "Gaussian"),
+    list_of_stat_names=("Linear", "MLP")):
+
+  # Create an iterator
+  components_iterator = itertools.product(
+      itertools.product(list_of_prior_fns, list_of_mech_models),
+      list_of_stat_module)
+  names_iterator = itertools.product(
+      itertools.product(list_of_prior_names, list_of_mech_names),
+      list_of_stat_names)
+
+  # Combine into one giant dictionary of predictions
+  estimator_dictionary = {}
+  for components, name_components in zip(components_iterator, names_iterator):
+    (prior_fn, mech_model_cls), stat_module = components
+    (prior_name, mech_name), stat_name = name_components
+    model_name = "_".join([prior_name, mech_name, stat_name])
+    stat_model = network_models.NormalDistributionModel(
+        predict_module=stat_module,
+        log_prior_fn=prior_fn)
+    mech_model = mech_model_cls()
+    estimator_dictionary[model_name] = StatMechEstimator(
+        train_steps=train_steps,
+        stat_model=stat_model,
+        mech_model=mech_model,
+        fused_train_steps=fused_train_steps,
+        time_mask_value=time_mask_value,
+        fit_seed=fit_seed)
+    return estimator_dictionary

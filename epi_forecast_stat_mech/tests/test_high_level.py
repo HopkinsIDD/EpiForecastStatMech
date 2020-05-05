@@ -93,5 +93,12 @@ class TestHighLevelIterativeEstimator(absltest.TestCase):
     self.assertLen(predictions.sample, num_samples)
 
 
+class TestGetEstimatorDict(absltest.TestCase):
+  """Tests for get_estimator_dict."""
+
+  def test_get_estimator_dict(self):
+    _ = high_level.get_estimator_dict()
+
+
 if __name__ == '__main__':
   absltest.main()
