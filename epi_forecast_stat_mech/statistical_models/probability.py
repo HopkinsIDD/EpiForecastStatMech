@@ -24,8 +24,8 @@ def softplus_scale_estimate(
 def gaussian_with_softplus_scale_estimate(
     x, axis, min_scale, mean=0, softness=1):
   """Returns a Gaussian distribution whose variance is estimated using `x`."""
-  scale_estimate = softplus_scale_estimate(x, axis, min_scale, softness)
-  return tfd.Normal(mean, scale_estimate)
+  scale_estimate = softplus_scale_estimate(x - mean, axis, min_scale, softness)
+  return tfd.Normal(mean, jax.lax.stop_gradient(scale_estimate))
 
 # Normalizing factor so that `soft_laplace_log_prob` is a proper distribution.
 LOG_SOFT_LAPLACE_INTEGRAL = 1.185495232349193

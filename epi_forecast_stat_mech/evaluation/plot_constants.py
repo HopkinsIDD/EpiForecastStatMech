@@ -52,7 +52,7 @@ model_colors = {
         'color': '#DD0000',
         'linestyle': ':'
     },
-    'iterative_median': {
+    'iterative_mean': {
         'color': '#00DD00',
         'linestyle': ':'
     },
