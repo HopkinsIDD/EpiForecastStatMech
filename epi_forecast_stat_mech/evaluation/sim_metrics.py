@@ -43,24 +43,40 @@ def _helper_data_validator(data_inf, predictions):
   return obs_plus_pred_clip
 
 
+def _helper_construct_dataarray(ground_truth, predictions):
+  """Helper function to construct an xr.DataArray with an 'value_type' dim.
+
+  Args:
+    ground_truth: an xr.DataArray containing the ground truth values
+      for a give metric. Has dims (model, location, sample).
+    predictions: an xr.DataArray containing the predicted values for a given
+      metric. Has dims (model, location, sample).
+  Returns:
+    all_values: an xr.DataArray containing the ground truth and predicted values
+      as well as their difference. Has dims (value_type, model, location,
+      sample)
+  """
+  all_values = xr.concat(
+      [ground_truth, predictions, ground_truth-predictions], dim='value_type')
+  all_values.coords['value_type'] = ['ground_truth', 'predicted', 'difference']
+  return all_values
+
+
 def total_size_error(data_inf, predictions):
   """Calculate the error in the predicted cumulative epidemic size.
 
   Returns the error in the predicted vs. true cumulative epidemic sizes.
-  The (signed) error is predicted - true.
+  The (signed) error is true - predicted.
 
   Args:
     data_inf: an xr.DataArray containing the ground-truth infections
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, sample, model). Where model is the
+      dimensions of (model, location, sample, time). Where model is the
        Estimator used to generate the predicted new_infections.
   Returns:
-    true_total_size: an xr.DataArray containing the ground truth total
-      epidemic size. Has dims (location, sample, model).
-    pred_total_size: an xr.DataArray containing the predicted total
-      epidemic size. Has dims (location, sample, model).
-    error_total_size: an xr.DataArray containing the error in the predicted
-      total epidemic size.
+    total_size: an xr.DataArray containing the ground truth and predicted total
+      sizes as well as their difference. Has dims (value_type, model, location,
+      sample)
   """
   obs_plus_pred = _helper_data_validator(data_inf, predictions)
 
@@ -69,7 +85,7 @@ def total_size_error(data_inf, predictions):
   # Calculate the predicted size
   pred_total_size = obs_plus_pred.sum('time')
 
-  return true_total_size, pred_total_size, pred_total_size - true_total_size
+  return _helper_construct_dataarray(true_total_size, pred_total_size)
 
 
 def helper_time_percent_complete(inf, percent_complete=0.25):
@@ -77,7 +93,7 @@ def helper_time_percent_complete(inf, percent_complete=0.25):
 
   Args:
     inf: an xr.DataArray representing new_infections with
-      dimensions of (location, time, sample).
+      dimensions of (location, sample, time).
     percent_complete: a float representing the percent of the epidemic that we
       want to see completed.
   Returns:
@@ -97,22 +113,19 @@ def time_percent_complete_error(data_inf, predictions, percent_complete=0.25):
   """Calculate the error in the predicted cumulative epidemic size.
 
   Returns the error in the predicted vs. true cumulative epidemic sizes.
-  The (signed) error is predicted - true.
+  The (signed) error is true - predicted.
 
   Args:
     data_inf: an xr.DataArray containing the ground-truth infections
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, sample, model). Where model is the
+      dimensions of (model, location, sample, time). Where model is the
       Estimator used to generate the predicted new_infections.
     percent_complete: a float representing the percent of the epidemic that we
       want to see completed.
   Returns:
-    true_time: an xr.DataArray containing the ground truth time of
-      the percent complete. Has dims (location, sample, model).
-    target_time: an xr.DataArray containing the predicted time of the
-      percent complete. Has dims (location, sample, model).
-    error: an xr.DataArray containing the error in the predicted
-      time of the percent complete. Has dims (location, sample, model).
+    time_percent_complete: an xr.DataArray containing the ground truth and
+      predicted times as well as their difference. Has dims
+      (value_type, model, location, sample)
   """
   obs_plus_pred = _helper_data_validator(data_inf, predictions)
 
@@ -120,7 +133,7 @@ def time_percent_complete_error(data_inf, predictions, percent_complete=0.25):
 
   true_time = helper_time_percent_complete(data_inf, percent_complete)
 
-  return true_time, target_time, target_time - true_time
+  return _helper_construct_dataarray(true_time, target_time)
 
 
 def peak_size_error(data_inf, predictions):
@@ -129,20 +142,17 @@ def peak_size_error(data_inf, predictions):
   Returns the error in the predicted vs. true peak epidemic sizes.
   Peak epidemic size is defined as the maximum number of new infections
   in a single time step.
-  The (signed) error is predicted - true.
+  The (signed) error is true - predicted.
 
   Args:
     data_inf: an xr.DataArray containing the ground-truth infections
     predictions: an xr.DataArray representing predicted new_infections with
-      dimensions of (location, time, sample, model). Where model is the
+      dimensions of (model, location, sample, time). Where model is the
        Estimator used to generate the predicted new_infections.
   Returns:
-    true_peak_size: an xr.DataArray containing the ground truth peak size of the
-      epidemic. Has dims (location, sample, model).
-    pred_peak_size: an xr.DataArray containing the predicted peak size of the
-      epidemic. Has dims (location, sample, model).
-    error_peak_size: an xr.DataArray containing the error in the predicted
-      peak epidemic size. Has dims (location, sample, model).
+    peak_size: an xr.DataArray containing the ground truth and predicted peak
+      sizes as well as their difference. Has dims (value_type, model, location,
+      sample)
   """
   true_peak_size = data_inf.max('time')
 
@@ -152,7 +162,7 @@ def peak_size_error(data_inf, predictions):
   obs_plus_pred = _helper_data_validator(data_inf, predictions)
   pred_peak_size = obs_plus_pred.max('time')
 
-  return true_peak_size, pred_peak_size, pred_peak_size-true_peak_size
+  return _helper_construct_dataarray(true_peak_size, pred_peak_size)
 
 
 def peak_time_error(data_inf, predictions):
@@ -161,7 +171,7 @@ def peak_time_error(data_inf, predictions):
   Returns the error in the time of the predicted vs. true peak epidemic.
   Peak epidemic time is defined as the time coordinate with the maximum number
   of new infections in a single time step.
-  The (signed) error is predicted - true.
+  The (signed) error is true - predicted.
 
   Args:
     data_inf: an xr.DataArray containing the ground-truth infections
@@ -169,16 +179,13 @@ def peak_time_error(data_inf, predictions):
       dimensions of (location, time, sample, model). Where model is the
        Estimator used to generate the predicted new_infections.
   Returns:
-    true_peak_time: an xr.DataArray containing the ground truth peak time of the
-      epidemic. Has dims (location, sample, model).
-    pred_peak_time: an xr.DataArray containing the predicted peak time of the
-      epidemic. Has dims (location, sample, model).
-    error: an xr.DataArray containing the error in the predicted
-      peak time. Has dims (location, sample, model).
+    peak_time: an xr.DataArray containing the ground truth and predicted peak
+      times as well as their difference. Has dims (value_type, model, location,
+      sample)
   """
   true_peak_time = data_inf.argmax('time', skipna=True)
 
   obs_plus_pred = _helper_data_validator(data_inf, predictions)
   pred_peak_time = obs_plus_pred.argmax('time', skipna=True)
 
-  return true_peak_time, pred_peak_time, pred_peak_time - true_peak_time
+  return _helper_construct_dataarray(true_peak_time, pred_peak_time)

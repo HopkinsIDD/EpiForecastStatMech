@@ -145,7 +145,7 @@ class SimMetricsEvalTest(parameterized.TestCase):
               data=np.ones((1, 50, 20)),
               dims=['sample', 'location', 'time'],
               coords={'time': np.arange(0, 20)}),
-          expected_error=np.ones((1, 50))),
+          expected_error=-np.ones((1, 50))),
       dict(
           sim_metric=sim_metrics.peak_size_error,
           data=xr.DataArray(
@@ -156,7 +156,7 @@ class SimMetricsEvalTest(parameterized.TestCase):
               data=np.ones(5),
               dims=['time'],
               coords={'time': np.arange(0, 5)}),
-          expected_error=-2),
+          expected_error=2),
       dict(
           sim_metric=sim_metrics.peak_size_error,
           data=xr.DataArray(
@@ -178,7 +178,7 @@ class SimMetricsEvalTest(parameterized.TestCase):
               data=np.ones((4)),
               dims=['time'],
               coords={'time': np.arange(1, 5)}),
-          expected_error=-2),
+          expected_error=2),
       dict(
           sim_metric=sim_metrics.peak_time_error,
           data=xr.DataArray(
@@ -189,7 +189,7 @@ class SimMetricsEvalTest(parameterized.TestCase):
               data=np.ones(4),
               dims=['time'],
               coords={'time': np.arange(1, 5)}),
-          expected_error=-2),
+          expected_error=2),
       dict(
           sim_metric=sim_metrics.peak_time_error,
           data=xr.DataArray(
@@ -211,7 +211,7 @@ class SimMetricsEvalTest(parameterized.TestCase):
               data=np.ones((1, 5, 20)),
               dims=['sample', 'location', 'time'],
               coords={'time': np.arange(0, 20)}),
-          expected_error=20 * np.ones((1, 5))),
+          expected_error=-20 * np.ones((1, 5))),
       dict(
           sim_metric=sim_metrics.time_percent_complete_error,
           data=xr.DataArray(
@@ -222,7 +222,7 @@ class SimMetricsEvalTest(parameterized.TestCase):
               data=np.array([0, 0, 2, 2, 0]),
               dims=['time'],
               coords={'time': np.arange(0, 5)}),
-          expected_error=-1),
+          expected_error=1),
       dict(
           sim_metric=sim_metrics.time_percent_complete_error,
           data=xr.DataArray(
@@ -233,10 +233,11 @@ class SimMetricsEvalTest(parameterized.TestCase):
               data=np.array([[0, 0, 2, 2, 12]]),
               dims=['metric', 'time'],
               coords={'time': np.arange(0, 5)}),
-          expected_error=np.array([2])),
+          expected_error=np.array([-2])),
   )
   def testSimMetrics(self, data, pred, sim_metric, expected_error):
-    _, _, error = sim_metric(data, pred)
+    values = sim_metric(data, pred)
+    error = values.sel(value_type='difference')
     np.testing.assert_array_equal(error, expected_error)
 
 
