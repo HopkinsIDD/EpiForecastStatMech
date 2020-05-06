@@ -9,7 +9,7 @@ import numpy as np
 from scipy import stats
 import xarray as xr
 
-SPLIT_TIME=10
+SPLIT_TIME=100
 
 
 def final_size_poisson_dist(num_locations):
@@ -56,9 +56,13 @@ def new_vc_simulation_model(num_samples,
       covariates for each location and representing the simulation parameters.
       All datavalues are initialized to 0.
   """
+  if num_time_steps < SPLIT_TIME:
+    raise ValueError('num_time_steps must be at least %d' % (SPLIT_TIME,))
   ds = data_model.new_model(num_samples, num_locations, num_time_steps,
                             num_static_covariates)
-
+  ds['canonical_split_time'] = SPLIT_TIME
+  ds['canonical_split_time'].attrs['description'] = (
+      'Int representing the canonical time at which to split the data.')
   ds['growth_rate'] = data_model.new_dataarray({'location': num_locations})
   ds['growth_rate'].attrs['description'] = (
       'Float representing the growth rate in each location (r).'
