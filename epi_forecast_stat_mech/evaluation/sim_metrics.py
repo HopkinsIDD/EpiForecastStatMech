@@ -7,7 +7,8 @@ import xarray as xr
 
 
 def _helper_data_validator(data_inf, predictions):
-  # TODO(eklein, mcoram) decide if there's a better way to handle missing data
+  # TODO(edklein, mcoram) decide if there's a better way to handle missing data
+  # TODO(edklein, mcoram) more validation checks?
   """Function to make sure that data and predictions cover the same time.
 
   Args:
@@ -134,6 +135,36 @@ def time_percent_complete_error(data_inf, predictions, percent_complete=0.25):
   true_time = helper_time_percent_complete(data_inf, percent_complete)
 
   return _helper_construct_dataarray(true_time, target_time)
+
+
+def cumulative_inf_error(data_inf, predictions, days_to_compare=14):
+  """Calculate the error in the predicted cumulative infections for a time.
+
+  Calculates the true and predicted cumulative infection rate from split_day
+  to split_day+days_to_compare. Returns the error in the predicted vs. true
+  infections. The (signed) error is true - predicted.
+
+  Args:
+    data_inf: an xr.DataArray containing the ground-truth infections
+    predictions: an xr.DataArray representing predicted new_infections with
+      dimensions of (model, location, sample, time). Where model is the
+      Estimator used to generate the predicted new_infections.
+    days_to_compare: an int representing the number of days (in simulation time)
+      that we want to compare.
+  Returns:
+    cumulative_inf: an xr.DataArray containing the ground truth and
+    predicted infection sizes as well as their difference. Has dims
+    (value_type, model, location, sample)
+  """
+  if days_to_compare > len(predictions.time):
+    raise ValueError('Days_to_compare is greater than the predicted times')
+  small_predictions = predictions.isel(time=slice(None, days_to_compare))
+  small_data = data_inf.sel(time=small_predictions.time)
+
+  true_inf_size = small_data.sum('time')
+  pred_inf_size = small_predictions.sum('time')
+
+  return _helper_construct_dataarray(true_inf_size, pred_inf_size)
 
 
 def peak_size_error(data_inf, predictions):
