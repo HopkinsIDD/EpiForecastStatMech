@@ -772,15 +772,17 @@ def predefined_constant_initializer(
   return combo_params_from_inits(intensity_family.params0, model_dims, alpha_init=None)
 
 
-def common_fit_initializer(
-    intensity_family,
-    data,
-    unused_penalty_scale,
-    unused_mech_bottom_scale,
-    **unused_kwargs):
+def common_fit_initializer(intensity_family,
+                           data,
+                           unused_penalty_scale,
+                           unused_mech_bottom_scale,
+                           use_nelder_mead=False,
+                           **unused_kwargs):
   model_dims = get_model_dims(intensity_family, data)
   common_fit_params, _ = find_common_fit(
-      intensity_family=intensity_family, trajectories=data)
+      intensity_family=intensity_family,
+      trajectories=data,
+      use_nelder_mead=use_nelder_mead)
   return combo_params_from_inits(common_fit_params, model_dims, alpha_init=None)
 
 

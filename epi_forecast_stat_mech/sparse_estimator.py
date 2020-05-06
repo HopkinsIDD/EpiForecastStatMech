@@ -2,14 +2,15 @@
 """Implement the high_level interface for the sparse functionality."""
 
 import collections
-import pandas as pd
+import functools
 import pickle
-import xarray
 
-import numpy as np
-import tensorflow as tf
 import jax
 from jax import numpy as jnp
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import xarray
 
 from epi_forecast_stat_mech import data_model
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
@@ -284,6 +285,8 @@ class SparseEstimator(estimator_base.Estimator):
 def get_estimator_dict():
   estimator_dict = {}
   estimator_dict['sparse_classic'] = SparseEstimator()
-  # estimator_dict['sparse_guassian'] = SparseEstimator(
-  #     intensity_family=gaussian.GaussianFamily)
+  estimator_dict['sparse_gaussian'] = SparseEstimator(
+      intensity_family=gaussian.GaussianFamily,
+      initializer=functools.partial(
+          sparse.common_fit_initializer, use_nelder_mead=True))
   return estimator_dict
