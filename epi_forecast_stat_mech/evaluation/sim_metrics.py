@@ -103,7 +103,7 @@ def helper_time_percent_complete(inf, percent_complete=0.25):
   # Calculate the total epidemic size
   total_size = inf.sum('time')
   target_size = percent_complete * total_size
-  cumulative_infections = inf.cumsum()
+  cumulative_infections = inf.cumsum('time')
   target_time = cumulative_infections.where(
       cumulative_infections <= target_size).argmax('time')
   return target_time
