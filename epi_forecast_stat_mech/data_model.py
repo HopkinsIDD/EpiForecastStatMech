@@ -147,14 +147,14 @@ def validate_data(data,
   if set(data.static_covariates.dims) != set(('location', 'static_covariate')):
     raise ValueError(
         '`data.static_covariates` is required to have dims `(\'location\', \'static_covariate\')`; '
-        'got {data.static_covariates.dims}.')
+        'got {data.static_covariates.dims}.'.format(data=data))
   if 'dynamic_covariates' in data_vars_set:
     required_dims_set = required_dims_set.union(set(['dynamic_covariate']))
     if set(data.dynamic_covariates.dims) != set(
         ('location', 'time', 'dynamic_covariate')):
       raise ValueError(
           '`data.dynamic_covariates` is required to have dims `(\'location\', \'time\', \'dynamic_covariate\')`; '
-          'got {data.dynamic_covariates.dims}.')
+          'got {data.dynamic_covariates.dims}.'.format(data=data))
   # Check for required dims.
   data_dims_set = set(data.dims.keys())
   missing_dims = required_dims_set.difference(data_dims_set)
