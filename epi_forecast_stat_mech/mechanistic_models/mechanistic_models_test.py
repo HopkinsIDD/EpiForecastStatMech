@@ -1,18 +1,14 @@
 # Lint as: python3
 """Tests for epi_forecast_stat_mech.mechanistic_models.mechanistic_models."""
 
-import collections
+from absl.testing import absltest
 from absl.testing import parameterized
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models
 import jax
 import numpy as np
 
-from absl.testing import absltest
 
-
-EpidemicsRecord = collections.namedtuple(
-    'EpidemicsRecord',
-    ['t', 'infections_over_time', 'cumulative_infections'])
+EpidemicsRecord = mechanistic_models.EpidemicsRecord
 
 
 class PoissonSampleTest(parameterized.TestCase):
@@ -40,11 +36,15 @@ class MechanisticModelsTest(parameterized.TestCase):
            observed_duration=10, trajectory_length=20),
       dict(mech_model_cls=mechanistic_models.ViboudChowellModel,
            observed_duration=13, trajectory_length=24),
+      dict(mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
+           observed_duration=13, trajectory_length=24),
+      dict(mech_model_cls=mechanistic_models.StepBasedGaussianModel,
+           observed_duration=13, trajectory_length=24),
       )
   def testShapes(self, mech_model_cls, observed_duration, trajectory_length):
     """Tests that mechanistic models methods return values of expected shape."""
     mech_model = mech_model_cls()
-    mech_model_params = mech_model_cls.init_parameters()
+    mech_model_params = mech_model.init_parameters()
     rng = jax.random.PRNGKey(42)
     observed_epidemics = EpidemicsRecord(
         np.arange(observed_duration).astype(np.float32),
@@ -60,6 +60,28 @@ class MechanisticModelsTest(parameterized.TestCase):
         mech_model_params, observed_epidemics)
     actual_shape = model_log_prob.shape
     expected_shape = (observed_duration,)
+    self.assertEqual(actual_shape, expected_shape)
+
+  def testTimeDependentModels(
+      self,
+      mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
+      observed_duration=13,
+      trajectory_length=24
+  ):
+    """Test output shapes for models that allow time dependent parameters."""
+    mech_model = mech_model_cls()
+    mech_model_params = np.tile(
+        np.expand_dims(mech_model.init_parameters(), 0),
+        (observed_duration + trajectory_length, 1))
+    rng = jax.random.PRNGKey(42)
+    observed_epidemics = EpidemicsRecord(
+        np.arange(observed_duration).astype(np.float32),
+        np.arange(observed_duration).astype(np.float32),
+        np.cumsum(np.arange(observed_duration).astype(np.float32)))
+    predicted_epidemics_trajectory = mech_model.predict(
+        mech_model_params, rng, observed_epidemics, trajectory_length)
+    actual_shape = predicted_epidemics_trajectory.shape
+    expected_shape = (observed_duration + trajectory_length,)
     self.assertEqual(actual_shape, expected_shape)
 
 
