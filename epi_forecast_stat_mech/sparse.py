@@ -524,7 +524,8 @@ def do_single_bic_run(intensity_family,
 
   tf_v_orig = tf_float(v_df.values)
   tf_v_means = tf.reduce_mean(tf_v_orig, axis=0, keepdims=True)
-  tf_v_sd = tf.reshape(tf_float(v_df.std(axis=0, ddof=1)), (1, -1))
+  tf_v_sd = tf.reshape(
+      tf_float(np.maximum(v_df.std(axis=0, ddof=1), 1E-6)), (1, -1))
   # The centered-scaled version simply called tf_v.
   # Internally, we'll use this as "X",
   # But in the final report we'll switch back to tf_v_orig as "X".
@@ -689,7 +690,7 @@ def summarize_mech_param_fits(run1, trajectories):
     corr_coef = np.corrcoef(
         np_float(mech_params_hat_stack[:, j]),
         np_float(mech_params_stack[:, j]))[0, 1]
-    alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0)
+    alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0, ddof=1)
     alpha_preso_df = pd.DataFrame(collections.OrderedDict([
         ('alpha', alpha_df.iloc[:, j]),
         ('alpha_for_standardized_X', alpha_for_standarized_X),
@@ -706,7 +707,7 @@ def summarize_mech_param_fits(run1, trajectories):
         name=raw_param_name,
         intercept=intercept[j],
         alpha=alpha_df.iloc[:, j],
-        alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0),
+        alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0, ddof=1),
         alpha_preso_df = alpha_preso_df,
         resid_sd=np.std(resid, ddof=1),
         hat_sd=np.std(np_float(mech_params_hat_stack[:, j]), ddof=1),
