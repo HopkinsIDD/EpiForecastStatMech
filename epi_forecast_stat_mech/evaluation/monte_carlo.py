@@ -1,6 +1,8 @@
 # Lint as: python3
 """Code for drawing Monte Carlo rollouts from models."""
 
+import functools
+
 import jax
 
 
@@ -23,7 +25,7 @@ def trajectories(rollout_fn, rng, args, nsamples):
   return jax.vmap(jax.vmap(rollout_fn, [0, None]), [None, 0])(rngs, args)
 
 
-@jax.partial(jax.jit, static_argnums=(0, 4, 5))
+@functools.partial(jax.jit, static_argnums=(0, 4, 5))
 def trajectories_from_model(mechanistic_model, parameters, rng,
                             observed_epidemics, length, nsamples):
   """Computes batches of `nsamples` for `parameters` and `observed_epidemics`.
