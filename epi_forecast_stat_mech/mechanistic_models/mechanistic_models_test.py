@@ -5,8 +5,10 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models
 import jax
+from jax.config import config
 import numpy as np
 
+config.parse_flags_with_absl()  # Necessary for running on TPU.
 
 EpidemicsRecord = mechanistic_models.EpidemicsRecord
 
