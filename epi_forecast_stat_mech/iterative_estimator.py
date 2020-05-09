@@ -16,9 +16,8 @@ import xarray
 
 from epi_forecast_stat_mech import data_model
 from epi_forecast_stat_mech import estimator_base
-from epi_forecast_stat_mech import stat_mech_estimator
-from epi_forecast_stat_mech.evaluation import monte_carlo
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models
+from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import probability as stat_prob
 
 
@@ -68,8 +67,7 @@ class IterativeEstimator(estimator_base.Estimator):
     data_model.validate_data(data, require_no_samples=True)
     self.data = data
     num_locations = data.sizes['location']
-    self.epidemics = epidemics = stat_mech_estimator._pack_epidemics_record_tuple(
-        data)
+    self.epidemics = epidemics = mechanistic_models.pack_epidemics_record_tuple(data)
     self.time_mask = time_mask = _get_time_mask(data)
     self.v_df = v_df = _get_static_covariate_df(data)
 
@@ -169,27 +167,9 @@ class IterativeEstimator(estimator_base.Estimator):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
     mech_params = self.mech_params_stack
-    # Mirrors the code in StatMechEstimator.predict from here on.
-    predictions = monte_carlo.trajectories_from_model(self.mech_model,
-                                                      mech_params, rng,
-                                                      self.epidemics,
-                                                      time_steps, num_samples)
-
-    # TODO(jamieas): consider indexing by seed.
-    sample = np.arange(num_samples)
-
-    # Here we assume evenly spaced integer time values.
-    # TODO(jamies): assert something during fit.
-    epidemic_time = self.data.time.data
-    time_delta = epidemic_time[1] - epidemic_time[0]
-    time = np.arange(1, time_steps + 1) * time_delta + epidemic_time[-1]
-
-    location = self.data.location
-
-    return xarray.DataArray(
-        predictions,
-        coords=[location, sample, time],
-        dims=['location', 'sample', 'time']).rename('new_infections')
+    return predict_lib.simulate_predictions(self.mech_model, mech_params,
+                                            self.data, self.epidemics,
+                                            time_steps, num_samples, rng)
 
 
 def _get_static_covariate_df(trajectories):

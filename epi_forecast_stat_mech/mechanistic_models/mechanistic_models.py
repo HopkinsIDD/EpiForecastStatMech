@@ -24,6 +24,16 @@ EpidemicsRecord = collections.namedtuple(
     ["t", "infections_over_time", "cumulative_infections"])
 
 
+def pack_epidemics_record_tuple(ds):
+  # TODO(mcoram): Improve nan handling upstream and place guards.
+  new_infections = ds.new_infections.fillna(0).transpose("location", "time")
+  return EpidemicsRecord(
+      np.tile(
+          np.expand_dims(ds.time.values.astype(np.float32), 0),
+          (ds.dims["location"], 1)), new_infections.values.astype(np.float32),
+      np.cumsum(new_infections.values.astype(np.float32), axis=-1))
+
+
 @dataclasses.dataclass
 class FastPoisson:
   """A Poisson distribution that uses a Normal approximation for large rate."""

@@ -10,7 +10,6 @@ import jax
 from jax.experimental import optimizers
 import jax.numpy as jnp
 import numpy as np
-import xarray
 
 import tensorflow_probability
 tfp = tensorflow_probability.experimental.substrates.jax
@@ -18,16 +17,10 @@ tfd = tfp.distributions
 
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
-from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import network_models  # pylint: disable=g-bad-import-order
-
-
-
-_EpidemicsRecord = collections.namedtuple(
-    "_EpidemicsRecord",
-    ["t", "infections_over_time", "cumulative_infections"])
 
 
 LogLikelihoods = collections.namedtuple(
@@ -36,15 +29,6 @@ LogLikelihoods = collections.namedtuple(
      "mech_log_prior",
      "mech_log_likelihood",
      "stat_log_likelihood"])
-
-
-def _pack_epidemics_record_tuple(ds):
-  return _EpidemicsRecord(
-      np.tile(np.expand_dims(ds.time.values.astype(np.float32), 0),
-              (ds.dims["location"], 1)),
-      ds.new_infections.transpose("location", "time").values.astype(np.float32),
-      np.cumsum(ds.new_infections.transpose("location", "time").values.astype(
-          np.float32), axis=-1))
 
 
 def _get_time_mask(ds, min_value=30):
@@ -123,7 +107,8 @@ class StatMechEstimator(estimator_base.Estimator):
     self.data = data
     self.covariates = covariates = data.static_covariates.transpose(
         "location", "static_covariate").values
-    self.epidemics = epidemics = _pack_epidemics_record_tuple(data)
+    self.epidemics = epidemics = (
+        mechanistic_models.pack_epidemics_record_tuple(data))
     self.time_mask = _get_time_mask(data, time_mask_value)
 
     # Mechanistic model initialization
@@ -186,24 +171,9 @@ class StatMechEstimator(estimator_base.Estimator):
       raise AttributeError("`fit` must be called before `predict`.")
     # Should mech_params be sampled from a distribution instead?
     _, mech_params = self.params_
-    predictions = monte_carlo.trajectories_from_model(
-        self.mech_model, mech_params, rng,
-        self.epidemics, time_steps, num_samples)
-
-    # TODO(jamieas): consider indexing by seed.
-    sample = np.arange(num_samples)
-
-    # Here we assume evenly spaced integer time values.
-    epidemic_time = self.data.time.data
-    time_delta = epidemic_time[1] - epidemic_time[0]
-    time = np.arange(1, time_steps + 1) * time_delta + epidemic_time[-1]
-
-    location = self.data.location
-
-    return xarray.DataArray(
-        predictions,
-        coords=[location, sample, time],
-        dims=["location", "sample", "time"]).rename("new_infections")
+    return predict_lib.simulate_predictions(self.mech_model, mech_params,
+                                            self.data, self.epidemics,
+                                            time_steps, num_samples, rng)
 
 
 def laplace_prior(parameters, scale_parameter=1.):

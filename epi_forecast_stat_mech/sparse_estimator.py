@@ -15,11 +15,10 @@ import xarray
 from epi_forecast_stat_mech import data_model
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import gaussian
-from epi_forecast_stat_mech import stat_mech_estimator
 from epi_forecast_stat_mech import sparse
 from epi_forecast_stat_mech import viboud_chowell
-from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 
 
 def tf_float(x):
@@ -246,7 +245,7 @@ class SparseEstimator(estimator_base.Estimator):
   @property
   def epidemics(self):
     self._check_fitted()
-    return stat_mech_estimator._pack_epidemics_record_tuple(self.data.fillna(0))
+    return mechanistic_models.pack_epidemics_record_tuple(self.data)
 
   def _check_fitted(self):
     if not hasattr(self, 'combo_params'):
@@ -259,27 +258,9 @@ class SparseEstimator(estimator_base.Estimator):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
     mech_params = self.mech_params_for_jax_code
-    # Mirrors the code in StatMechEstimator.predict from here on.
-    # Note that epidemics and mech_model are properties.
-    predictions = monte_carlo.trajectories_from_model(
-        self.mech_model, mech_params, rng,
-        self.epidemics, time_steps, num_samples)
-
-    # TODO(jamieas): consider indexing by seed.
-    sample = np.arange(num_samples)
-
-    # Here we assume evenly spaced integer time values.
-    # TODO(jamies): assert something during fit.
-    epidemic_time = self.data.time.data
-    time_delta = epidemic_time[1] - epidemic_time[0]
-    time = np.arange(1, time_steps + 1) * time_delta + epidemic_time[-1]
-
-    location = self.data.location
-
-    return xarray.DataArray(
-        predictions,
-        coords=[location, sample, time],
-        dims=['location', 'sample', 'time']).rename('new_infections')
+    return predict_lib.simulate_predictions(self.mech_model, mech_params,
+                                            self.data, self.epidemics,
+                                            time_steps, num_samples, rng)
 
 
 def get_estimator_dict():
