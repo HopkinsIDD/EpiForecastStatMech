@@ -158,7 +158,7 @@ class SparseEstimator(estimator_base.Estimator):
 
   @property
   def static_covariate_df(self):
-    v_df = sparse._get_covariate_df(self.data)
+    v_df = sparse._get_static_covariate_df(self.data)
     return v_df
 
   @property
@@ -205,8 +205,6 @@ class SparseEstimator(estimator_base.Estimator):
     else:
       raise NotImplementedError('%s is not implemented.' %
                                 self.intensity_family.name)
-
-
 
   def summarize_fit_params(self):
     self._check_fitted()
