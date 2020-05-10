@@ -233,8 +233,10 @@ class DemoIntensityFamily(object):
     @tf.function
     def mech_logprob(params):
       wrapped_params = self.intensity_family.params_wrapper().reset(params)
-      return get_mech_logprob(self.trajectories0,
+      lp =  get_mech_logprob(self.trajectories0,
                               self.intensity_family.intensity, wrapped_params)
+      tf.debugging.assert_all_finite(lp, 'nan in mech_logprob: %s' % (self.trajectories0))
+      return lp
 
     return mech_logprob
 
@@ -345,6 +347,9 @@ def find_common_fit(intensity_family, trajectories, use_nelder_mead=False):
       val_and_grad_common_mech_loss, intensity_family.params0._x, unravel)
   print(*opt_status)
   print(common_fit_params)
+  if np.isnan(opt_status[1]):
+    raise RuntimeError('nan encountered in optimization.')
+
   return common_fit_params, di_list
 
 
