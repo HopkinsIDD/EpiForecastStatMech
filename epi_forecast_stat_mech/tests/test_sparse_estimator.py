@@ -33,3 +33,5 @@ class TestHighLevelSparseEstimator(absltest.TestCase):
     self.assertLen(predictions.time, prediction_length)
     np.testing.assert_array_equal(data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
+    _ = estimator.alpha
+    _ = estimator.mech_params

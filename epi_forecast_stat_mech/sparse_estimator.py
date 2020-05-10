@@ -181,30 +181,40 @@ class SparseEstimator(estimator_base.Estimator):
     return tf.stack(self.combo_params.mech_params_raw, axis=0)
 
   @property
+  def mech_params(self):
+    return xarray.DataArray(self.mech_params_df)
+
+  @property
   def mech_params_df(self):
     self._check_fitted()
     accum = []
     for mp in self.combo_params.mech_params_raw:
       wrapped_mp = self.intensity_family.params_wrapper().reset(mp)
       accum.append(wrapped_mp.as_tuple())
-    return pd.DataFrame(accum,
-                        columns=self.intensity_family.param_names,
+    return pd.DataFrame(
+        accum,
+        columns=pd.Index(self.intensity_family.param_names, name='param'),
+        index=self.data.location.to_index())
+
+  @property
+  def encoded_mech_params(self):
+    self._check_fitted()
+    return xarray.DataArray(self.encoded_mech_params_df)
+
+  @property
+  def encoded_mech_params_df(self):
+    self._check_fitted()
+    encoded_stack = np_float(tf.stack(self.combo_params.mech_params_raw))
+    return pd.DataFrame(encoded_stack,
+                        columns==pd.Index(self.intensity_family.encoded_param_names, name='encoded_param'),
                         index=self.data.location.to_index())
 
   @property
   def mech_params_for_jax_code(self):
     mech_params_df = self.mech_params_df
-    if self.intensity_family.name == 'Viboud-Chowell':
-      return jnp_float(np_float(
-          np.log(mech_params_df.values)))
-    elif self.intensity_family.name == 'Gaussian':
-      return jnp_float(
-          np.concatenate((
-              mech_params_df.values[:, [0]],
-              np.log(mech_params_df.values[:, 1:])), axis=1))
-    else:
-      raise NotImplementedError('%s is not implemented.' %
-                                self.intensity_family.name)
+    jnp_mech_stack = jax.vmap(self.mech_model.encode_params)(
+        mech_params_df.values)
+    return jnp_mech_stack
 
   def summarize_fit_params(self):
     self._check_fitted()

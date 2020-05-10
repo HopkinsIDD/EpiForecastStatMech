@@ -132,6 +132,31 @@ class MechanisticModel:
     """
     ...
 
+  @property
+  @abc.abstractmethod
+  def encoded_param_names(self):
+    ...
+
+  @property
+  @abc.abstractmethod
+  def param_names(self):
+    ...
+
+  @property
+  @abc.abstractmethod
+  def bottom_scale(self):
+    ...
+
+  def decode_params(self, parameters):
+    # This won't actually work when split_and_scale_parameters is not defined.
+    # A more "grown-up" version requires flattening anyway.
+    return jnp.concatenate(
+        self.split_and_scale_parameters(parameters), axis=-1)
+
+  @abc.abstractmethod
+  def encode_params(self, parameters):
+    ...
+
 
 # TODO(dkochkov) Change intensity method to intensity_params method to include
 # multi-parametric distributions.
@@ -373,6 +398,21 @@ class ViboudChowellModel(MechanisticModel):
     """
     return jnp.split(jnp.exp(parameters), 4, axis=-1)
 
+  @property
+  def param_names(self):
+    return ("r", "a", "p", "K")
+
+  def encode_params(self, parameters):
+    return jnp.log(parameters)
+
+  @property
+  def encoded_param_names(self):
+    return ("log_r", "log_a", "log_p", "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((.1, .1, .1, .1))
+
   @staticmethod
   def init_parameters():
     """Returns reasonable `parameters` for an initial guess."""
@@ -460,6 +500,21 @@ class GaussianModel(MechanisticModel):
     """
     m, log_s, log_k = jnp.split(parameters, 3, axis=-1)
     return m, jnp.exp(log_s), jnp.exp(log_k)
+
+  @property
+  def param_names(self):
+    return ("m", "s", "K")
+
+  def encode_params(self, parameters):
+    return jnp.concatentate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
+
+  @property
+  def encoded_param_names(self):
+    return ("m", "log_s", "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((3., .1, .1))
 
   @staticmethod
   def init_parameters():

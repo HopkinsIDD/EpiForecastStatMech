@@ -165,15 +165,30 @@ class StatMechEstimator(estimator_base.Estimator):
     self._is_trained = True
     return self
 
-  def predict(self, time_steps, num_samples, seed=0):
-    rng = jax.random.PRNGKey(seed)
+  def _check_fitted(self):
     if not hasattr(self, "params_"):
       raise AttributeError("`fit` must be called before `predict`.")
+
+  def predict(self, time_steps, num_samples, seed=0):
+    self._check_fitted()
+    rng = jax.random.PRNGKey(seed)
     # Should mech_params be sampled from a distribution instead?
     _, mech_params = self.params_
     return predict_lib.simulate_predictions(self.mech_model, mech_params,
                                             self.data, self.epidemics,
                                             time_steps, num_samples, rng)
+
+  @property
+  def mech_params(self):
+    self._check_fitted()
+    return predict_lib.mech_params_array(self.data, self.mech_model,
+                                         self.params_[1])
+
+  @property
+  def encoded_mech_params(self):
+    self._check_fitted()
+    return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
+                                                 self.params_[1])
 
 
 def laplace_prior(parameters, scale_parameter=1.):

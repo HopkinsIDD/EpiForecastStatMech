@@ -47,17 +47,18 @@ class IterativeEstimator(estimator_base.Estimator):
   def save(self, file_out):
     pickle.dump(self, file_out)
 
-  def __init__(self, stat_estimators=None):
+  def __init__(self, stat_estimators=None, mech_model=None):
     if stat_estimators is None:
       stat_estimators = collections.defaultdict(
           lambda: sklearn.ensemble.RandomForestRegressor(n_estimators=50))
     self.stat_estimators = stat_estimators
     self.hat_interpolation_alpha = 0.5
     self.iter_max = 100
-    # bake in vc for now
-    self.mech_model = mechanistic_models.ViboudChowellModel()
-    self.encoded_param_names = ['log_r', 'log_a', 'log_p', 'log_K']
-    self.mech_bottom_scale = jnp_float([.1, .1, .1, .1])
+    if mech_model is None:
+      mech_model = mechanistic_models.ViboudChowellModel()
+    self.mech_model = mech_model
+    self.encoded_param_names = self.mech_model.encoded_param_names
+    self.mech_bottom_scale = self.mech_model.bottom_scale
     self.out_dim = len(self.encoded_param_names)
 
   def _unflatten(self, x):
@@ -67,7 +68,8 @@ class IterativeEstimator(estimator_base.Estimator):
     data_model.validate_data(data, require_no_samples=True)
     self.data = data
     num_locations = data.sizes['location']
-    self.epidemics = epidemics = mechanistic_models.pack_epidemics_record_tuple(data)
+    self.epidemics = epidemics = mechanistic_models.pack_epidemics_record_tuple(
+        data)
     self.time_mask = time_mask = _get_time_mask(data)
     self.v_df = v_df = _get_static_covariate_df(data)
 
@@ -170,6 +172,18 @@ class IterativeEstimator(estimator_base.Estimator):
     return predict_lib.simulate_predictions(self.mech_model, mech_params,
                                             self.data, self.epidemics,
                                             time_steps, num_samples, rng)
+
+  @property
+  def mech_params(self):
+    self._check_fitted()
+    return predict_lib.mech_params_array(self.data, self.mech_model,
+                                         self.mech_params_stack)
+
+  @property
+  def encoded_mech_params(self):
+    self._check_fitted()
+    return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
+                                                 self.mech_params_stack)
 
 
 def _get_static_covariate_df(trajectories):
