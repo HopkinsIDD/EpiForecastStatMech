@@ -184,6 +184,11 @@ def validate_data(data,
       raise ValueError(
           'data.new_infections.isnull() has a bad pattern at locations: %s.' %
           (bad_locations_accum,))
+  # Validate no new_infections are < 0.
+  new_infections = data.new_infections.transpose('location', 'time', ...)
+  bad_new_infections = new_infections < 0
+  if bad_new_infections.sum().item() > 0:
+    raise ValueError('data.new_infections contains negative entries.')
 
 
 def calculate_cumulative_infections(new_infections):
