@@ -93,7 +93,7 @@ def generate_betas_many_cov2(num_locations, num_pred, num_not_pred):
 
 
 def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
-                             num_static_covariates, num_dynamic_covariates=0):
+                             num_static_covariates):
   """Return a zero data_model.new_model with extra simulation parameters.
 
   Args:
@@ -105,8 +105,6 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
       epidemic can have
     num_static_covariates: int representing the number of static covariates for
       each location
-    num_dynamic_covariates: int representing the number of dynamic covariates
-      for each location (defaults to 0).
 
   Returns:
     ds: an xr.Dataset representing the new infections and
@@ -116,7 +114,7 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
   if num_time_steps < SPLIT_TIME:
     raise ValueError('num_time_steps must be at least %d' % (SPLIT_TIME,))
   ds = data_model.new_model(num_samples, num_locations, num_time_steps,
-                            num_static_covariates, num_dynamic_covariates)
+                            num_static_covariates)
   ds['canonical_split_time'] = SPLIT_TIME
   ds['canonical_split_time'].attrs['description'] = (
       'Int representing the canonical time at which to split the data.')
@@ -124,9 +122,6 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
   ds['static_weights'] = data_model.new_dataarray(
       {'static_covariate': num_static_covariates})
 
-  ds['dynamic_weights'] = data_model.new_dataarray(
-      {'time': num_time_steps,
-       'dynamic_covariate': num_dynamic_covariates})
 
   # TODO(edklein) should population_size be a covariate?
   ds['population_size'] = data_model.new_dataarray({'location': num_locations})
@@ -154,18 +149,10 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
       'description'] = ('Float representing the recovery rate in each location.'
                         ' This is used in the SIR simulation of the epidemic.')
 
-  if not num_dynamic_covariates:
-    ds['growth_rate'] = data_model.new_dataarray({'location': num_locations})
-    ds['growth_rate'].attrs[
-        'description'] = ('Float representing the growth rate in each location.'
-                          'This is used in the SIR simulation of the epidemic.')
-  else:
-    ds['growth_rate'] = data_model.new_dataarray({'location': num_locations,
-                                                  'time': num_time_steps})
-    ds['growth_rate'].attrs[
-        'description'] = ('Float representing the growth rate in each location'
-                          ' at each point in time.'
-                          'This is used in the SIR simulation of the epidemic.')
+  ds['growth_rate'] = data_model.new_dataarray({'location': num_locations})
+  ds['growth_rate'].attrs[
+      'description'] = ('Float representing the growth rate in each location.'
+                        'This is used in the SIR simulation of the epidemic.')
 
   return ds
 
@@ -298,8 +285,7 @@ def generate_simulations(gen_beta_fn,
   num_static_covariates = v.shape[1]
 
   trajectories = new_sir_simulation_model(num_samples, num_locations,
-                                          num_time_steps, num_static_covariates,
-                                          num_dynamic_covariates=1)
+                                          num_time_steps, num_static_covariates)
 
   trajectories['growth_rate'] = beta
   trajectories['static_weights'] = alpha
