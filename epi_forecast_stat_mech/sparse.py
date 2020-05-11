@@ -235,7 +235,9 @@ class DemoIntensityFamily(object):
       wrapped_params = self.intensity_family.params_wrapper().reset(params)
       lp =  get_mech_logprob(self.trajectories0,
                               self.intensity_family.intensity, wrapped_params)
-      tf.debugging.assert_all_finite(lp, 'nan in mech_logprob: %s' % (self.trajectories0))
+      # This is useful for debugging sometimes, but can raise unwanted errors
+      # during line-search, so we leave it off normally.
+      # tf.debugging.assert_all_finite(lp, 'nan in mech_logprob: %s' % (self.trajectories0))
       return lp
 
     return mech_logprob
