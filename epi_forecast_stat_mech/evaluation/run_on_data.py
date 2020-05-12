@@ -30,6 +30,11 @@ def train_test_split_time(data, split_day):
   test_covariates.attrs['split'] = 'test'
   test_covariates.attrs['split_spec'] = 'train_test_split_time'
 
+  # datetime64 is not serializable as an attribute, causing to_netcdf to crash
+  # if we include it in attrs. However, making it a variable works :-/.
+  train_data = train_data.assign(split_day=split_day)
+  test_covariates = test_covariates.assign(split_day=split_day)
+
   return train_data, test_covariates
 
 
