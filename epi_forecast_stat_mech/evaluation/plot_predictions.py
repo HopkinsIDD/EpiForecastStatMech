@@ -2,7 +2,6 @@
 """Plot helpers for predictions from high_level.Estimator.
 """
 
-import itertools
 from epi_forecast_stat_mech.evaluation.plot_constants import model_colors
 from epi_forecast_stat_mech.evaluation.plot_constants import model_types
 from matplotlib import pyplot as plt
@@ -25,10 +24,10 @@ def plot_rollout_samples(predictions, model_to_plot, location_to_plot):
   Returns:
     None
   """
-  pred = predictions.sel(model=model_to_plot)
+  pred = predictions.sel(model=model_to_plot).dropna('time')
   mean = pred.isel(
       location=location_to_plot).mean('sample').rename('infection_mean')
-  color_params = model_colors[model_to_plot]
+  color_params = model_colors(model_to_plot)
   # is there a better way to do this?
   for i in pred.sample:
     plt.plot(
@@ -66,12 +65,12 @@ def plot_std_dev(predictions, model_to_plot, location_to_plot, num_stddevs=3):
   pred = predictions.sel({
       'model': model_to_plot
   }, drop=True).isel(
-      location=location_to_plot, drop=True)
+      location=location_to_plot, drop=True).dropna('time')
   mean = pred.mean('sample')
   stddev = pred.std('sample')
   upper = mean + num_stddevs * stddev
   lower = mean - num_stddevs * stddev
-  color_params = model_colors[model_to_plot]
+  color_params = model_colors(model_to_plot)
   plt.fill_between(pred.time.data, upper.data, lower.data, alpha=.2,
                    label='_nolegend_', color=color_params['color'])
 
@@ -95,7 +94,7 @@ def plot_observed_data(data_inf, predictions, location_to_plot):
   """
   data_to_plot = data_inf.isel(location=location_to_plot)
 
-  observed_color_params = model_colors['observed']
+  observed_color_params = model_colors('observed')
   plt.plot(
       data_to_plot.coords['time'].sel(
           time=(data_inf.time < min(predictions.time))),
@@ -120,10 +119,11 @@ def plot_ground_truth_data(data_inf, predictions, location_to_plot):
     None
   """
   data_to_plot = data_inf.isel(location=location_to_plot)
-  ground_truth_color_params = model_colors['ground_truth']
+  ground_truth_color_params = model_colors('ground_truth')
+
   plt.plot(
-      predictions.time,
-      data_to_plot.sel(time=predictions.time),
+      predictions.dropna('time').time,
+      data_to_plot.sel(time=predictions.dropna('time').time),
       **ground_truth_color_params,
       label='ground truth')
   return None
@@ -202,29 +202,85 @@ def plot_many_model_predictions(data_inf,
   plt.show()
 
 
-def final_size_comparison(data,
-                          predictions_dict,
-                          split_day,
-                          figsize=(12, 8),
-                          styles=('b.', 'r+', 'go')):
-  styles = itertools.cycle(styles)
-  predictions_time = None
-  for predictions in predictions_dict.values():
-    if predictions_time is None:
-      predictions_time = predictions.time
-    else:
-      # We require all predictions in the dictionary to have aligned time.
-      np.testing.assert_array_equal(predictions_time, predictions.time)
+def plot_violin(ax, error_array, models_to_plot):
+  """Make a violin plot of one error metric of multiple models on one dataset.
 
-  final_size = data.new_infections.sel(time=predictions_time).sum('time')
+  Args:
+    ax: A pyplot.axis object to draw on.
+    error_array: An xr.DataArray representing the calculated errors of a given
+      metric with dimensions of (location, time, model, value_type).
+    models_to_plot: A list of strings representing the names of the models to
+      plot. Must be elements of error_array.model.values().
 
-  plt.figure(figsize=figsize)
-  for style, (name, predictions) in zip(styles, predictions_dict.items()):
-    K = predictions.mean('sample').sum('time')
-    plt.plot(final_size, K, style, label=name)
-  plt.plot(plt.xlim(), plt.xlim(), 'k--')
-  plt.legend()
-  plt.title('True vs. predicted final epidemic size (post day %d)' % split_day)
-  plt.xlabel('True')
-  plt.ylabel('Predicted')
+  Returns:
+    None
+  """
+  e = []
+
+  for model in models_to_plot:
+    mean_error = error_array.sel(model=model).mean('sample')
+    mean_diff = mean_error.sel(value_type='difference')
+
+  e.append(mean_diff)
+
+  ax.violinplot(e, showextrema=True, showmeans=False)
+
+  ax.set_ylabel('error, in raw counts', labelpad=None)
+
+  ax.axhline(0, c='k')
+  ax.set_xticks(np.arange(1, len(models_to_plot) + 1))
+  ax.set_xticklabels(models_to_plot, rotation=15)
+  ax.set_xlim(0.25, len(models_to_plot) + 0.75)
+  ax.set_xlabel('Model')
+
+
+def plot_scatter(ax, error_array, models_to_plot):
+  """Make a scatter plot of real/pred metric of multiple models on one dataset.
+
+  Args:
+    ax: A pyplot.axis object to draw on.
+    error_array: An xr.DataArray representing the calculated errors of a given
+      metric, with dimensions of (location, time, model, value_type).
+    models_to_plot: A list of strings representing the names of the models to
+      plot. Must be elements of error_array.model.values().
+  Returns:
+    None
+  """
+  for model in models_to_plot:
+    mean_error = error_array.sel(model=model).mean('sample')
+    ax.scatter(mean_error.sel(value_type='ground_truth'),
+               mean_error.sel(value_type='predicted'),
+               label=model, s=2, alpha=0.75, c=model_colors(model)['color'])
+
+  ax.set_aspect('equal')
+  ax.set_ylim(ax.get_xlim())
+  ax.set_ylabel('Predicted Value', labelpad=None)
+  ax.set_xlabel('True Value', labelpad=None)
+  ax.plot(ax.get_xlim(), ax.get_xlim(), 'k--')
+  ax.legend()
+
+
+def plot_violin_scatter(error_array, models_to_plot, metrics_to_plot):
+  """Make a violin and scatter plot of metrics of multiple models on a dataset.
+
+  Args:
+    error_array: An xr.DataArray representing the calculated errors with
+      with dimensions of (location, time, model, metric, value_type).
+    models_to_plot: A list of strings representing the names of the models to
+      plot. Must be elements of error_array.model.values().
+    metrics_to_plot: A list of strings representing the names of the error
+      metrics to plot. Must be elements of error_array.metric.values().
+  Returns:
+    None
+  """
+
+  fig, ax = plt.subplots(2, len(metrics_to_plot),
+                         figsize=(5*len(metrics_to_plot), 15))
+
+  for i, metric in enumerate(metrics_to_plot):
+    plot_violin(ax[0][i], error_array.sel(metric=metric),
+                models_to_plot)
+    ax[0][i].set_title(metric)
+    plot_scatter(ax[1][i], error_array.sel(metric=metric), models_to_plot)
+    ax[1][i].set_title(metric)
   plt.show()
