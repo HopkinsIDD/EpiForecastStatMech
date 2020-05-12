@@ -33,7 +33,9 @@ class PerceptronModule(nn.Module):
     return nn.Dense(x, output_size)
 
 
-LinearModule = PerceptronModule.partial(hidden_layer_sizes=(), activation=None)
+class LinearModule(
+    PerceptronModule.partial(hidden_layer_sizes=(), activation=None)):
+  pass
 
 
 @dataclasses.dataclass
@@ -112,5 +114,3 @@ class NormalDistributionModel(base.StatisticalModel):
     return jax.tree_multimap(
         lambda l, s: tfd.Normal(loc=l, scale=s),
         unpack_fn(loc), unpack_fn(scale))
-
-

@@ -10,6 +10,7 @@ import jax
 from jax.experimental import optimizers
 import jax.numpy as jnp
 import numpy as np
+import xarray
 
 import tensorflow_probability
 tfp = tensorflow_probability.experimental.substrates.jax
@@ -189,6 +190,35 @@ class StatMechEstimator(estimator_base.Estimator):
     self._check_fitted()
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
                                                  self.params_[1])
+
+  @property
+  def alpha(self):
+    if issubclass(self.stat_model.predict_module, network_models.LinearModule):
+      # For the simple case of many_cov2_1_2, these:
+      #   self.params_[0]['Dense_0']['bias']
+      #   self.params_[0]['Dense_0']['kernel']
+      # have shapes: (2,) and (3, 2), apparently (num_static, 2*num_observable).
+      # The observables they are predicting are (for VC) basically K as a column
+      # vector: self.params_[1][..., -1:]
+      # All the existing models seem to do this except StepBasedGaussianModel
+      # which omits the method (bug?).
+      # So why have 2 intercepts and two length 3 alpha-vectors? It appears to
+      # be because network_models.NormalDistributionModel has it's
+      # predict_module emit two params for every observable: loc, raw_scale.
+      # So the first columnn of the kernel should be an alpha for log_K
+      # and the second should be an alpha for log_K_sd (apparently).
+      kernel = self.params_[0]["Dense_0"]["kernel"]
+      assert kernel.shape[1] == 2, "unexpected kernel shape."
+      alpha = xarray.DataArray(
+          np.asarray(kernel[:, :1]),
+          dims=("static_covariate", "encoded_param"),
+          coords=dict(
+              static_covariate=self.data.static_covariate,
+              encoded_param=["log_K"]))
+      return alpha
+    else:
+      raise AttributeError("no alpha method for stat_model: %s" %
+                           (self.stat_model.__class__,))
 
 
 def laplace_prior(parameters, scale_parameter=1.):
