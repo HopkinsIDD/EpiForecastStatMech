@@ -162,7 +162,8 @@ def generate_ground_truth(population_size,
                           beta,
                           gamma,
                           num_samples,
-                          num_time_steps):
+                          num_time_steps,
+                          prob_infection_constant=0.2):
   """A function that generates infections over time using a discrete SIR model.
 
   We assume that the epidemic starts with a single case at time 0.
@@ -183,6 +184,10 @@ def generate_ground_truth(population_size,
       location
     num_time_steps: an int representing the number of simulation 'days' to run
       at each location.
+    prob_infection_constant: a float representing a constant that we multiply
+      the probability of becoming infected by. We noticed that a value of 1. led
+      to curves that were short in time and clustered in time. By changing this
+      to less than 1., our models fit better.
 
   Returns:
     new_infections: a xr.DataArray representing the new_infections at each
@@ -208,14 +213,12 @@ def generate_ground_truth(population_size,
   num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
   num_susceptible -= num_infected
 
-  beta_td = beta.expand_dims({'time': new_infections.sizes['time']})
-
   for t in range(0, new_infections.sizes['time']):
     # Calculate the probability that a person becomes infected
     # Python3 doesn't seem to work, so force a float
 
     frac_pop_infected = num_infected.astype(float) / population_size
-    prob_infected = 1 - np.exp(-frac_pop_infected*beta_td[dict(time=t)])
+    prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta))
 
     # Determine the number of new infections
     # By drawing from a binomial distribution
@@ -251,7 +254,8 @@ def generate_simulations(gen_beta_fn,
                          num_time_steps=500,
                          constant_gamma=0.33,
                          constant_pop_size=10000,
-                         fraction_infected_limits=(.05, 1.)):
+                         fraction_infected_limits=(.05, 1.),
+                         prob_infection_constant=0.2):
   """Generate many samples of SIR curves.
 
   Generate many SIR curves. Each sample contains num_locations.
@@ -274,6 +278,10 @@ def generate_simulations(gen_beta_fn,
       10000)
     fraction_infected_limits: A pair of floats in [0, 1] representing the limits
       on the fraction of the population that will be infected at SPLIT_TIME.
+    prob_infection_constant: a float representing a constant that we multiply
+      the probability of becoming infected by. We noticed that a value of 1. led
+      to curves that were short in time and clustered in time. By changing this
+      to less than 1., our models fit better.
 
   Returns:
     trajectories: a xr.Dataset of the simulated infections over time
@@ -307,7 +315,7 @@ def generate_simulations(gen_beta_fn,
   trajectories['new_infections'] = generate_ground_truth(
       trajectories.population_size, dummy_start_time, trajectories.growth_rate,
       trajectories.recovery_rate, trajectories.sizes['sample'],
-      trajectories.sizes['time'])
+      trajectories.sizes['time'], prob_infection_constant)
   cases = trajectories.new_infections.cumsum('time')
   trajectories['final_size'] = final_size = cases.isel(time=-1)
   target_cases = (trajectories['fraction_infected'] *
