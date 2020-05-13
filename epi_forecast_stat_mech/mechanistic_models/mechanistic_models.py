@@ -506,7 +506,7 @@ class GaussianModel(MechanisticModel):
     return ("m", "s", "K")
 
   def encode_params(self, parameters):
-    return jnp.concatentate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
+    return jnp.concatenate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
 
   @property
   def encoded_param_names(self):
