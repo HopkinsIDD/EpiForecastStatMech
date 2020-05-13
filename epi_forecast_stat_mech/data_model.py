@@ -48,7 +48,7 @@ def new_dataarray(parameters):
 
 
 def new_model(num_samples, num_locations, num_time_steps,
-              num_static_covariates):
+              num_static_covariates, num_dynamic_covariates=0):
   """Return a xr.Dataset with an infection time series and a list of covariates.
 
   Args:
@@ -60,6 +60,8 @@ def new_model(num_samples, num_locations, num_time_steps,
       epidemic can have
     num_static_covariates: int representing the number of static covariates for
       each location
+    num_dynamic_covariates: int representing the number of dynamic covariates
+      for each location. If zero, this DataArray is not created.
 
   Returns:
     ds: an xr.Dataset reprsenting the new infections and
@@ -85,6 +87,19 @@ def new_model(num_samples, num_locations, num_time_steps,
       'description'] = 'Number of new infections at each location over time.'
   ds['static_covariates'].attrs[
       'description'] = 'Static covariates at each location.'
+
+  # Only create this array if we have dynamic_covariates
+  # Otherwise we cannot save/load this dataset
+  if num_dynamic_covariates > 0:
+    dynamic_covariates = new_dataarray({
+        'location': num_locations,
+        'time': num_time_steps,
+        'dynamic_covariate': num_dynamic_covariates
+    })
+    ds['dynamic_covariates'] = dynamic_covariates
+    ds['dynamic_covariates'].attrs[
+        'description'] = 'Dynamic covariates at each location and time.'
+
   return ds
 
 

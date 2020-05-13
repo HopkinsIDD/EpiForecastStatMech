@@ -93,7 +93,7 @@ def generate_betas_many_cov2(num_pred, num_not_pred, num_locations):
 
 
 def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
-                             num_static_covariates):
+                             num_static_covariates, num_dynamic_covariates=0):
   """Return a zero data_model.new_model with extra simulation parameters.
 
   Args:
@@ -105,6 +105,8 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
       epidemic can have
     num_static_covariates: int representing the number of static covariates for
       each location
+    num_dynamic_covariates: int representing the number of dynamic covariates
+      for each location.
 
   Returns:
     ds: an xr.Dataset representing the new infections and
@@ -114,7 +116,7 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
   if num_time_steps < SPLIT_TIME:
     raise ValueError('num_time_steps must be at least %d' % (SPLIT_TIME,))
   ds = data_model.new_model(num_samples, num_locations, num_time_steps,
-                            num_static_covariates)
+                            num_static_covariates, num_dynamic_covariates)
   ds['canonical_split_time'] = SPLIT_TIME
   ds['canonical_split_time'].attrs['description'] = (
       'Int representing the canonical time at which to split the data.')
@@ -149,10 +151,22 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
       'description'] = ('Float representing the recovery rate in each location.'
                         ' This is used in the SIR simulation of the epidemic.')
 
-  ds['growth_rate'] = data_model.new_dataarray({'location': num_locations})
-  ds['growth_rate'].attrs[
-      'description'] = ('Float representing the growth rate in each location.'
-                        'This is used in the SIR simulation of the epidemic.')
+  if num_dynamic_covariates > 0:
+    ds['dynamic_weights'] = data_model.new_dataarray(
+      {'time': num_time_steps,
+       'dynamic_covariate': num_dynamic_covariates})
+
+    ds['growth_rate'] = data_model.new_dataarray({'location': num_locations,
+                                                  'time': num_time_steps})
+    ds['growth_rate'].attrs[
+        'description'] = ('Float representing the growth rate in each location'
+                          ' at each point in time.'
+                          'This is used in the SIR simulation of the epidemic.')
+  else:
+    ds['growth_rate'] = data_model.new_dataarray({'location': num_locations})
+    ds['growth_rate'].attrs[
+        'description'] = ('Float representing the growth rate in each location.'
+                          'This is used in the SIR simulation of the epidemic.')
 
   return ds
 
@@ -213,12 +227,14 @@ def generate_ground_truth(population_size,
   num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
   num_susceptible -= num_infected
 
+  beta_td = beta.expand_dims({'time': new_infections.sizes['time']})
+
   for t in range(0, new_infections.sizes['time']):
     # Calculate the probability that a person becomes infected
     # Python3 doesn't seem to work, so force a float
 
     frac_pop_infected = num_infected.astype(float) / population_size
-    prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta))
+    prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta_td[dict(time=t)]))
 
     # Determine the number of new infections
     # By drawing from a binomial distribution
