@@ -42,6 +42,24 @@ class TestGenerateSirSimulations(absltest.TestCase):
           num_time_steps=20,
           constant_pop_size=10000)
 
+  def test_random_dynamic_cov(self):
+    """Test we generate growth rates that change at a random time."""
+    static_beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
+                                       self.num_important_cov,
+                                       self.num_unimportant_cov)
+    dynamic_beta_fn = sir_sim.gen_dynamic_beta_random_time
+    trajectories = sir_sim.generate_simulations(
+        static_beta_fn,
+        self.num_simulations,
+        self.num_epidemics,
+        self.num_time_steps,
+        constant_pop_size=10000,
+        gen_dynamic_beta_fn=dynamic_beta_fn)
+
+    shift_growth_rate = trajectories.growth_rate.shift(time=1)
+    num_diff_betas = (trajectories.growth_rate[:, :-1] != shift_growth_rate[:, 1:]).sum()
+    assert num_diff_betas == self.num_epidemics
+
 
 if __name__ == '__main__':
   absltest.main()

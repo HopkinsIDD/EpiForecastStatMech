@@ -92,6 +92,31 @@ def generate_betas_many_cov2(num_pred, num_not_pred, num_locations):
   return beta, v, alpha
 
 
+def gen_dynamic_beta_random_time(num_locations, num_time_steps):
+  """Betas change at a random time between 1 and num_time_steps-1.
+
+  Args:
+    num_locations: an int representing the number of locations to simulate
+    num_time_steps: an int representing the number of time steps to simulate
+
+  Returns:
+    beta: an xr.DataArray consisting of the growth rate
+      for each epidemic with dimensions (location, time)
+    v: an xr.DataArray consisting of the randomly generated covariate for each
+      location with dimensions (location, time, 1)
+    alpha: an xr.DataArray consisting of the weights for each covariate with
+      dimension 1.
+  """
+  time = np.random.randint(1, num_time_steps-1, num_locations)
+  cov = np.zeros((num_locations, num_time_steps, 1))
+  for i in range(num_locations):
+    cov[i][time[i]:] = 1
+  v = xr.DataArray(cov, dims=['location', 'time', 'dynamic_covariate'])
+  alpha = np.random.uniform(-1., 0.)*xr.DataArray(np.ones(1), dims=['dynamic_covariate'])
+  beta = 0.4 * np.exp(alpha @ v)
+  return beta, v, alpha
+
+
 def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
                              num_static_covariates, num_dynamic_covariates=0):
   """Return a zero data_model.new_model with extra simulation parameters.
@@ -227,14 +252,15 @@ def generate_ground_truth(population_size,
   num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
   num_susceptible -= num_infected
 
-  beta_td = beta.expand_dims({'time': new_infections.sizes['time']})
+  if 'time' not in beta.dims:
+    beta = beta.expand_dims({'time': new_infections.sizes['time']})
 
   for t in range(0, new_infections.sizes['time']):
     # Calculate the probability that a person becomes infected
     # Python3 doesn't seem to work, so force a float
 
     frac_pop_infected = num_infected.astype(float) / population_size
-    prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta_td[dict(time=t)]))
+    prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta[dict(time=t)]))
 
     # Determine the number of new infections
     # By drawing from a binomial distribution
@@ -270,7 +296,8 @@ def generate_simulations(gen_constant_beta_fn,
                          constant_gamma=0.33,
                          constant_pop_size=10000,
                          fraction_infected_limits=(.05, 1.),
-                         prob_infection_constant=0.2):
+                         prob_infection_constant=0.2,
+                         gen_dynamic_beta_fn=None):
   """Generate many samples of SIR curves.
 
   Generate many SIR curves. Each sample contains num_locations.
@@ -296,6 +323,9 @@ def generate_simulations(gen_constant_beta_fn,
       the probability of becoming infected by. We noticed that a value of 1. led
       to curves that were short in time and clustered in time. By changing this
       to less than 1., our models fit better.
+    gen_dynamic_beta_fn: A function to generate the dynamic beta
+      values for each epidemic when passed num_locations and num_time_steps.
+      None if the betas are all static.
 
   Returns:
     trajectories: a xr.Dataset of the simulated infections over time
@@ -303,15 +333,27 @@ def generate_simulations(gen_constant_beta_fn,
   # generate growth rate for all samples,
   # this is constant between samples
   beta, v, alpha = gen_constant_beta_fn(num_locations)
+  num_static_covariates = len(v.static_covariate)
 
-  num_static_covariates = v.shape[1]
+  if gen_dynamic_beta_fn:
+    beta_td, v_td, alpha_td = gen_dynamic_beta_fn(num_locations, num_time_steps)
+    num_dynamic_covariates = (v_td.dynamic_covariate)
+    beta = beta_td + beta.expand_dims({'time': num_time_steps})
+
+  else:
+    num_dynamic_covariates=0
 
   trajectories = new_sir_simulation_model(num_samples, num_locations,
-                                          num_time_steps, num_static_covariates)
+                                          num_time_steps, num_static_covariates,
+                                          num_dynamic_covariates)
 
   trajectories['growth_rate'] = beta
   trajectories['static_weights'] = alpha
   trajectories['static_covariates'] = v
+
+  if gen_dynamic_beta_fn:
+    trajectories['dynamic_weights'] = alpha_td
+    trajectories['dynamic_covariates'] = v_td
 
   trajectories['population_size'].data = constant_pop_size * np.ones(
       num_locations)
