@@ -16,7 +16,6 @@ class TestGenerateVCSimulations(absltest.TestCase):
   def test_basic_sanity(self):
     trajectories = vc_sim.generate_simulations(
         vc_sim.final_size_poisson_dist,
-        (self.num_locations,),
         self.num_samples,
         self.num_locations,
         self.num_time_steps)

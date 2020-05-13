@@ -57,13 +57,13 @@ def generate_betas_effect_mod(num_locations):
   return beta, v, xr.DataArray(np.array([1, 1]), dims={'static_covariate': 2})
 
 
-def generate_betas_many_cov2(num_locations, num_pred, num_not_pred):
+def generate_betas_many_cov2(num_pred, num_not_pred, num_locations):
   """Betas depend on real valued vector of covariates.
 
   Args:
-    num_locations: an int representing the number of locations to simulate
     num_pred: number of covariates that affect beta
     num_not_pred: number of covariates that do not affect beta
+    num_locations: an int representing the number of locations to simulate
 
   Returns:
     beta: an xr.DataArray consisting of the growth rate
@@ -247,8 +247,7 @@ def generate_ground_truth(population_size,
   return new_infections
 
 
-def generate_simulations(gen_beta_fn,
-                         beta_gen_parameters,
+def generate_simulations(gen_constant_beta_fn,
                          num_samples,
                          num_locations,
                          num_time_steps=500,
@@ -264,9 +263,8 @@ def generate_simulations(gen_beta_fn,
   so the only difference is statistical.
 
   Args:
-    gen_beta_fn: a function to generate the beta values for each epidemic
-    beta_gen_parameters: a tuple containing all the parameters needed by
-      gen_beta_fn
+    gen_constant_beta_fn: a partial function to generate the constant beta
+      values for each epidemic when passed num_locations.
     num_samples: an int representing the number of samples to run
     num_locations: an int representing the number of locations to run in each
       sample
@@ -288,7 +286,7 @@ def generate_simulations(gen_beta_fn,
   """
   # generate growth rate for all samples,
   # this is constant between samples
-  beta, v, alpha = gen_beta_fn(*beta_gen_parameters)
+  beta, v, alpha = gen_constant_beta_fn(num_locations)
 
   num_static_covariates = v.shape[1]
 

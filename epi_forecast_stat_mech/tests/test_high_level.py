@@ -2,6 +2,7 @@
 """Tests for epi_forecast_stat_mech.high_level."""
 
 import collections
+import functools
 
 from absl.testing import absltest
 
@@ -25,10 +26,12 @@ def create_synthetic_dataset(
 ):
   """Creates synthetic data."""
   np.random.seed(seed)  # TODO(shoyer): use np.random.RandomState
+  beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
+                              num_important_cov,
+                              num_unimportant_cov)
   num_simulations = 1
   trajectories = sir_sim.generate_simulations(
-      sir_sim.generate_betas_many_cov2,
-      (num_epidemics, num_important_cov, num_unimportant_cov),
+      beta_fn,
       num_simulations, num_epidemics,
       constant_pop_size=constant_pop_size,
       num_time_steps=num_time_steps)

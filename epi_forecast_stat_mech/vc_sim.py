@@ -126,7 +126,6 @@ def generate_ground_truth(pred_size, r, p, num_samples, num_time_steps):
 
 
 def generate_simulations(final_size_fn,
-                         final_size_parameters,
                          num_samples,
                          num_locations,
                          num_time_steps=500,
@@ -141,10 +140,8 @@ def generate_simulations(final_size_fn,
   is statistical.
 
   Args:
-    final_size_fn: a function to generate the predicted final size of the
-      epidemic
-    final_size_parameters: a tuple containing all the parameters needed by
-      final_size_fn
+    final_size_fn: a partialfunction to generate the predicted final size of the
+      epidemic when passed the number of locations.
     num_samples: an int representing the number of simulations to run
     num_locations: an int representing the number of epidemics to run in each
       simulation
@@ -161,7 +158,7 @@ def generate_simulations(final_size_fn,
   """
   # generate growth rate for all simulations,
   # this is constant between simulations
-  final_sizes, v, alpha = final_size_fn(*final_size_parameters)
+  final_sizes, v, alpha = final_size_fn(num_locations)
 
   num_static_covariates = v.shape[1]
 

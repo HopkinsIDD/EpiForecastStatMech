@@ -1,4 +1,5 @@
 """Tests for epi_forecast_stat_mech/sir_sim ."""
+import functools
 from absl.testing import absltest
 
 from epi_forecast_stat_mech import sir_sim
@@ -16,9 +17,11 @@ class TestGenerateSirSimulations(absltest.TestCase):
     self.num_time_steps = 500
 
   def test_basic_sanity(self):
+    beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
+                                self.num_important_cov,
+                                self.num_unimportant_cov)
     trajectories = sir_sim.generate_simulations(
-        sir_sim.generate_betas_many_cov2,
-        (self.num_epidemics, self.num_important_cov, self.num_unimportant_cov),
+        beta_fn,
         self.num_simulations,
         self.num_epidemics,
         self.num_time_steps,
@@ -29,10 +32,11 @@ class TestGenerateSirSimulations(absltest.TestCase):
 
   def test_small_time_steps(self):
     with self.assertRaisesRegex(ValueError, '.*'):
+      beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
+                                  self.num_important_cov,
+                                  self.num_unimportant_cov)
       trajectories = sir_sim.generate_simulations(
-          sir_sim.generate_betas_many_cov2,
-          (self.num_epidemics, self.num_important_cov,
-           self.num_unimportant_cov),
+          beta_fn,
           self.num_simulations,
           self.num_epidemics,
           num_time_steps=20,
