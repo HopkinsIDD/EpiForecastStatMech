@@ -164,15 +164,15 @@ class SparseEstimator(estimator_base.Estimator):
   @property
   def alpha(self):
     """Return the linear model coefficients as an xarray.DataArray."""
-    return xarray.DataArray(
-        sparse._get_alpha_df(self.combo_params.alpha, self.static_covariate_df,
-                             self.intensity_family))
+    alpha = sparse._get_alpha_xarray(self.combo_params.alpha, self.data,
+                                     self.intensity_family)
+    alpha['static_covariate'] = self.data['static_covariate']
+    return alpha
 
   @property
   def intercept(self):
-    return xarray.DataArray(
-        sparse._get_intercept_s(self.combo_params.intercept,
-                                self.intensity_family))
+    return sparse._get_intercept_xarray(self.combo_params.intercept,
+                                        self.intensity_family)
 
   @property
   def mech_params_tf_stack(self):

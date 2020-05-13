@@ -670,6 +670,24 @@ def do_single_bic_run(intensity_family,
                        mech_params_hat_stack, intensity_family, penalty_scale,
                        opt_status)
 
+
+def _get_intercept_xarray(tf_intercept, intensity_family):
+  return xarray.DataArray(
+      np_float(tf_intercept),
+      dims=('encoded_param',),
+      coords=dict(encoded_param=intensity_family.encoded_param_names))
+
+
+def _get_alpha_xarray(tf_alpha, data, intensity_family):
+  alpha = xarray.DataArray(
+      np_float(tf_alpha),
+      dims=('encoded_param', 'static_covariate'),
+      coords=dict(
+          encoded_param=intensity_family.encoded_param_names,
+          static_covariate=data.static_covariate))
+  return alpha
+
+
 def _get_intercept_s(intercept, intensity_family):
   return pd.Series(intercept, index=pd.Index(
           intensity_family.encoded_param_names, name='encoded_param'))
