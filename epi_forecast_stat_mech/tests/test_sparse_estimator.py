@@ -36,3 +36,7 @@ class TestHighLevelSparseEstimator(absltest.TestCase):
     _ = estimator.alpha.to_netcdf()
     _ = estimator.intercept.to_netcdf()
     _ = estimator.mech_params
+
+
+if __name__ == '__main__':
+  absltest.main()
