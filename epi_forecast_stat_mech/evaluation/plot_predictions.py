@@ -95,10 +95,10 @@ def plot_observed_data(data_inf, predictions, location_to_plot):
   data_to_plot = data_inf.isel(location=location_to_plot)
 
   observed_color_params = model_colors('observed')
+  max_observed_time = min(predictions.dropna('time').time)
   plt.plot(
-      data_to_plot.coords['time'].sel(
-          time=(data_inf.time < min(predictions.time))),
-      data_to_plot.sel(time=(data_inf.time < min(predictions.time))),
+      data_to_plot.coords['time'].sel(time=(data_inf.time < max_observed_time)),
+      data_to_plot.sel(time=(data_inf.time < max_observed_time)),
       **observed_color_params,
       label='observed')
   return None
