@@ -681,10 +681,10 @@ def _get_intercept_xarray(tf_intercept, intensity_family):
 def _get_alpha_xarray(tf_alpha, data, intensity_family):
   alpha = xarray.DataArray(
       np_float(tf_alpha),
-      dims=('encoded_param', 'static_covariate'),
+      dims=('static_covariate', 'encoded_param'),
       coords=dict(
-          encoded_param=intensity_family.encoded_param_names,
-          static_covariate=data.static_covariate))
+          static_covariate=data.static_covariate,
+          encoded_param=intensity_family.encoded_param_names))
   return alpha
 
 
