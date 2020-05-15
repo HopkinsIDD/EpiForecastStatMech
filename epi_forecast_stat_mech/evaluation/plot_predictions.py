@@ -220,8 +220,7 @@ def plot_violin(ax, error_array, models_to_plot):
   for model in models_to_plot:
     mean_error = error_array.sel(model=model).mean('sample')
     mean_diff = mean_error.sel(value_type='difference')
-
-  e.append(mean_diff)
+    e.append(mean_diff)
 
   ax.violinplot(e, showextrema=True, showmeans=False)
 
