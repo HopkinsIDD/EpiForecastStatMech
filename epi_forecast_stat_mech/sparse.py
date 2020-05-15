@@ -656,8 +656,11 @@ def do_single_bic_run(intensity_family,
 
   # Sanity check:
   mech_params_hat_stack2 = final_intercept + tf.matmul(tf_v_orig, final_alpha)
-  abs_err_check = np.max(np.abs(np_float(mech_params_hat_stack) - np_float(mech_params_hat_stack2)))
-  assert abs_err_check < 1E-4, 'Standardization associated problem.'
+  abs_err = np.abs(
+      np_float(mech_params_hat_stack) - np_float(mech_params_hat_stack2))
+  rel_err_check = np.max(abs_err /
+                         (1. + np.abs(np_float(mech_params_hat_stack))))
+  assert rel_err_check < 1E-2, 'Standardization associated problem.'
 
   if verbosity >= 1:
     print(
