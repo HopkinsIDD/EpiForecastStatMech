@@ -18,8 +18,8 @@ class TestGenerateSirSimulations(absltest.TestCase):
 
   def test_basic_sanity(self):
     beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
-                                self.num_important_cov,
-                                self.num_unimportant_cov)
+                                num_pred=self.num_important_cov,
+                                num_not_pred=self.num_unimportant_cov)
     trajectories = sir_sim.generate_simulations(
         beta_fn,
         self.num_simulations,
@@ -33,8 +33,8 @@ class TestGenerateSirSimulations(absltest.TestCase):
   def test_small_time_steps(self):
     with self.assertRaisesRegex(ValueError, '.*'):
       beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
-                                  self.num_important_cov,
-                                  self.num_unimportant_cov)
+                                  num_pred=self.num_important_cov,
+                                  num_not_pred=self.num_unimportant_cov)
       trajectories = sir_sim.generate_simulations(
           beta_fn,
           self.num_simulations,
@@ -45,8 +45,8 @@ class TestGenerateSirSimulations(absltest.TestCase):
   def test_random_dynamic_cov(self):
     """Test we generate growth rates that change at a random time."""
     static_beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
-                                       self.num_important_cov,
-                                       self.num_unimportant_cov)
+                                       num_pred=self.num_important_cov,
+                                       num_not_pred=self.num_unimportant_cov)
     dynamic_beta_fn = sir_sim.gen_dynamic_beta_random_time
     trajectories = sir_sim.generate_simulations(
         static_beta_fn,

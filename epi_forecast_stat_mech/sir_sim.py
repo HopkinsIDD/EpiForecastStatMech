@@ -57,13 +57,14 @@ def generate_betas_effect_mod(num_locations):
   return beta, v, xr.DataArray(np.array([1, 1]), dims={'static_covariate': 2})
 
 
-def generate_betas_many_cov2(num_pred, num_not_pred, num_locations):
+def generate_betas_many_cov2(num_locations, num_pred=1, num_not_pred=2):
   """Betas depend on real valued vector of covariates.
 
   Args:
-    num_pred: number of covariates that affect beta
-    num_not_pred: number of covariates that do not affect beta
-    num_locations: an int representing the number of locations to simulate
+    num_locations: an int representing the number of locations to simulate.
+    num_pred: an int representing the number of covariates that affect beta.
+    num_not_pred: an int representing the number of covariates that do not
+      affect beta.
 
   Returns:
     beta: an xr.DataArray consisting of the growth rate

@@ -24,7 +24,8 @@ def create_synthetic_dataset(
   np.random.seed(seed)  # TODO(shoyer): use np.random.RandomState
   num_simulations = 1
   beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
-                              num_important_cov, num_unimportant_cov)
+                              num_pred=num_important_cov,
+                              num_not_pred=num_unimportant_cov)
   trajectories = sir_sim.generate_simulations(
       beta_fn,
       num_simulations, num_epidemics,
