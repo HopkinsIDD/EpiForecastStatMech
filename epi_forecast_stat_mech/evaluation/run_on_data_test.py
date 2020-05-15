@@ -16,7 +16,6 @@ def create_synthetic_dataset(
     num_epidemics=50,
     num_important_cov=1,
     num_unimportant_cov=2,
-    constant_pop_size=200000,
     num_time_steps=100,
 ):
   """Creates synthetic data."""
@@ -28,7 +27,6 @@ def create_synthetic_dataset(
   trajectories = sir_sim.generate_simulations(
       beta_fn,
       num_simulations, num_epidemics,
-      constant_pop_size=constant_pop_size,
       num_time_steps=num_time_steps)
   return trajectories
 

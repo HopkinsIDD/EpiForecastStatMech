@@ -431,7 +431,7 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
                          num_locations,
                          num_time_steps=500,
                          constant_gamma=0.33,
-                         constant_pop_size=10000,
+                         population_size=10000,
                          gen_dynamic_beta_fn=None):
   """Helper function to set up and store a bunch of variables in a xr.DataSet.
 
@@ -448,8 +448,8 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
       (default 500)
     constant_gamma: a float representing the constant recovery rate (default
       0.33)
-    constant_pop_size: an int representing the constant population size (default
-      10000)
+    population_size: a xr.DataArray representing the population size in each
+      location. If none, defaults to 10000 in each location.
     gen_dynamic_beta_fn: A function to generate the dynamic beta
       values for each epidemic when passed num_locations and num_time_steps.
       None if the betas are all static.
@@ -461,7 +461,15 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
   # generate growth rate for all samples,
   # this is constant between samples
   beta, v, alpha = gen_constant_beta_fn(num_locations)
-  num_static_covariates = len(v.static_covariate)
+
+  if type(population_size) is int:
+    population_size = xr.DataArray(population_size * np.ones(num_locations), dims=['location'])
+
+  static_covariates = xr.concat((v, population_size), 'static_covariate')
+  num_static_covariates = static_covariates.sizes['static_covariate']
+
+  # give population_size a weight of 0
+  static_weights = xr.concat((alpha, xr.DataArray(np.array([0]), dims=['static_covariate'])), 'static_covariate')
 
   if gen_dynamic_beta_fn:
     beta_td, v_td, alpha_td = gen_dynamic_beta_fn(num_locations, num_time_steps)
@@ -476,16 +484,16 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
                                           num_dynamic_covariates)
 
   trajectories['growth_rate'] = beta
-  trajectories['static_weights'] = alpha
-  trajectories['static_covariates'] = v
+  trajectories['static_covariates'] = static_covariates
+  trajectories['static_weights'] = static_weights
 
   if gen_dynamic_beta_fn:
     trajectories['dynamic_weights'] = alpha_td
     trajectories['dynamic_covariates'] = v_td
 
-  trajectories['population_size'].data = constant_pop_size * np.ones(
-      num_locations)
+  trajectories['population_size'] = population_size
   trajectories['recovery_rate'].data = constant_gamma * np.ones(num_locations)
+
   return trajectories
 
 
@@ -494,7 +502,7 @@ def generate_simulations(gen_constant_beta_fn,
                          num_locations,
                          num_time_steps=500,
                          constant_gamma=0.33,
-                         constant_pop_size=10000,
+                         population_size=10000,
                          gen_dynamic_beta_fn=None,
                          fraction_infected_limits=(.05, 1.),
                          prob_infection_constant=0.2):
@@ -515,8 +523,8 @@ def generate_simulations(gen_constant_beta_fn,
       (default 500)
     constant_gamma: a float representing the constant recovery rate (default
       0.33)
-    constant_pop_size: an int representing the constant population size (default
-      10000)
+    population_size: a xr.DataArray representing the population size in each
+      location. If none, defaults to 10000 in each location.
     gen_dynamic_beta_fn: A function to generate the dynamic beta
       values for each epidemic when passed num_locations and num_time_steps.
       None if the betas are all static.
@@ -535,7 +543,7 @@ def generate_simulations(gen_constant_beta_fn,
                                        num_locations,
                                        num_time_steps,
                                        constant_gamma,
-                                       constant_pop_size,
+                                       population_size,
                                        gen_dynamic_beta_fn)
 
   # Initially, all trajectories start at time 0.
@@ -555,7 +563,7 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
                                            num_locations,
                                            num_time_steps=500,
                                            constant_gamma=0.33,
-                                           constant_pop_size=10000,
+                                           population_size=10000,
                                            social_distancing_threshold=10000/4,
                                            fraction_infected_limits=(.05, 1.),
                                            prob_infection_constant=0.2):
@@ -580,9 +588,9 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
       (default 500)
     constant_gamma: a float representing the constant recovery rate (default
       0.33)
-    constant_pop_size: an int representing the constant population size (default
-      10000)
-    social_distancing_threshold: a float representing the number of
+    population_size: a xr.DataArray representing the population size in each
+      location. If none, defaults to 10000 in each location.
+    social_distancing_threshold: a DataArray representing the number of
       infected individuals in each location when we implement social distancing.
     fraction_infected_limits: A pair of floats in [0, 1] representing the limits
       on the fraction of the population that will be infected at SPLIT_TIME.
@@ -601,7 +609,7 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
                                        num_locations,
                                        num_time_steps,
                                        constant_gamma,
-                                       constant_pop_size,
+                                       population_size,
                                        gen_dynamic_beta_fn=None);
 
   beta, dynamic_covariates, dynamic_weights, new_infections = generate_social_distancing_ground_truth(
