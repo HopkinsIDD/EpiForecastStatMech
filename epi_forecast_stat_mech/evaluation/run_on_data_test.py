@@ -1,14 +1,13 @@
 # Lint as: python3
 """Tests for epi_forecast_stat_mech.evaluation.run_on_data."""
+import functools
 
 from absl.testing import absltest
-
 
 from epi_forecast_stat_mech import high_level
 from epi_forecast_stat_mech import sir_sim
 from epi_forecast_stat_mech.evaluation import run_on_data
 from epi_forecast_stat_mech.evaluation import sim_metrics
-import functools
 import numpy as np
 
 

@@ -103,6 +103,58 @@ def new_model(num_samples, num_locations, num_time_steps,
   return ds
 
 
+def shift_timeseries(data, fraction_infected_limits, split_time):
+  """Return a copy of data with shifted infection start times.
+
+  Returns a copy of data with the start times of new_infections shifted so that
+  the percent complete of the infections is randomly distributed between
+  fraction_infected_limits on split_time.
+
+  Args:
+    data: a xr.Dataset of the simulated infections over time.
+    fraction_infected_limits: A pair of floats in [0, 1] representing the limits
+      on the fraction of the population that will be infected at split_time.
+    split_time: a value of data.time.values() representing the day at which we
+      split the train and test data.
+
+  Returns:
+    trajectories: a copy of data with the start times of new_infections shifted.
+  """
+  trajectories = data.copy()
+
+  num_samples = len(trajectories.sample.values)
+  num_locations = len(trajectories.location.values)
+  # Randomly generate the fraction of infected people for each
+  # sample and location.
+  trajectories['fraction_infected'].data = np.random.uniform(
+      fraction_infected_limits[0], fraction_infected_limits[1],
+      (num_samples, num_locations))
+  cases = trajectories.new_infections.cumsum('time')
+  trajectories['final_size'] = cases.isel(time=-1)
+  target_cases = (trajectories['fraction_infected'] *
+                  trajectories['final_size']).round()
+  hit_times = np.apply_along_axis(
+      lambda x: np.where(x)[0][0], axis=-1, arr=cases >= target_cases)
+  shifts = split_time - hit_times
+
+  # TODO(edklein) make this its own function
+  shift_dataarray = xr.DataArray(shifts, dims=['samples', 'location'])
+  old_ni = trajectories.new_infections
+  shifted_new_infections = xr.concat([
+      xr.concat([
+          old_ni.isel(sample=j, location=k).shift(
+              time=shifts[j, k], fill_value=0)
+          for k in range(old_ni.sizes['location'])
+      ],
+                dim='location')
+      for j in range(old_ni.sizes['sample'])
+  ],
+                                     dim='sample')
+  trajectories['new_infections'] = shifted_new_infections
+  trajectories['start_time'] = shift_dataarray
+  return trajectories
+
+
 def validate_data(data,
                   enable_regex_check=False,
                   require_dynamics=False,

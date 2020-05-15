@@ -187,24 +187,5 @@ def generate_simulations(final_size_fn,
       trajectories.growth_rate_exp, trajectories.sizes['sample'],
       trajectories.sizes['time'])
 
-  cases = trajectories.new_infections.cumsum('time')
-
-  target_cases = (trajectories['fraction_infected'] *
-                  trajectories['final_size']).round()
-
-  hit_times = cases.where(cases <= target_cases).argmax('time').data
-  shifts = SPLIT_TIME - hit_times
-
-  old_ni = trajectories.new_infections
-  shifted_new_infections = xr.concat([
-      xr.concat([
-          old_ni.isel(sample=j, location=k).shift(
-              time=shifts[j, k], fill_value=0)
-          for k in range(old_ni.sizes['location'])], dim='location')
-      for j in range(old_ni.sizes['sample'])], dim='sample')
-
-  trajectories['new_infections'] = shifted_new_infections
-  trajectories['start_time'] = xr.DataArray(shifts, dims=['sample', 'location'])
-
-  return trajectories
-
+  return data_model.shift_timeseries(trajectories, fraction_infected_limits,
+                                    SPLIT_TIME)

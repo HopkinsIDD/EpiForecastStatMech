@@ -354,11 +354,6 @@ def generate_simulations(gen_constant_beta_fn,
       num_locations)
   trajectories['recovery_rate'].data = constant_gamma * np.ones(num_locations)
 
-  # Randomly generate the fraction of infected people for each
-  # sample and location.
-  trajectories['fraction_infected'].data = np.random.uniform(
-      fraction_infected_limits[0], fraction_infected_limits[1],
-      (num_samples, num_locations))
   # Initially, all trajectories start at time 0.
   # The actual start_time will be updated to be consistent with
   # fraction_infected being infected at SPLIT_TIME.
@@ -366,25 +361,5 @@ def generate_simulations(gen_constant_beta_fn,
       trajectories.population_size, trajectories.growth_rate,
       trajectories.recovery_rate, trajectories.sizes['sample'],
       trajectories.sizes['time'], prob_infection_constant)
-  cases = trajectories.new_infections.cumsum('time')
-  trajectories['final_size'] = final_size = cases.isel(time=-1)
-  target_cases = (trajectories['fraction_infected'] *
-                  trajectories['final_size']).round()
-  hit_times = np.apply_along_axis(
-      lambda x: np.where(x)[0][0], axis=-1, arr=cases >= target_cases)
-  shifts = SPLIT_TIME - hit_times
 
-  old_ni = trajectories.new_infections
-  shifted_new_infections = xr.concat([
-      xr.concat([
-          old_ni.isel(sample=j, location=k).shift(
-              time=shifts[j, k], fill_value=0)
-          for k in range(old_ni.sizes['location'])
-      ],
-                dim='location')
-      for j in range(old_ni.sizes['sample'])
-  ],
-                                     dim='sample')
-  trajectories['new_infections'] = shifted_new_infections
-  trajectories['start_time'].data = shifts
-  return trajectories
+  return data_model.shift_timeseries(trajectories, fraction_infected_limits, SPLIT_TIME)
