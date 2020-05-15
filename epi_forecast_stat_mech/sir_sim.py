@@ -284,21 +284,17 @@ def generate_ground_truth(population_size,
   return new_infections
 
 
-def generate_simulations(gen_constant_beta_fn,
+def _helper_setup_sir_sim(gen_constant_beta_fn,
                          num_samples,
                          num_locations,
                          num_time_steps=500,
                          constant_gamma=0.33,
                          constant_pop_size=10000,
-                         fraction_infected_limits=(.05, 1.),
-                         prob_infection_constant=0.2,
                          gen_dynamic_beta_fn=None):
-  """Generate many samples of SIR curves.
+  """Helper function to set up and store a bunch of variables in a xr.DataSet.
 
-  Generate many SIR curves. Each sample contains num_locations.
-  The locations may have different covariates, and thus different trajectories.
-  However between samples the covariates are the same,
-  so the only difference is statistical.
+  Returns a xr.Dataset containing the growth rate, covariates, weights,
+  population size, and recovery rate.
 
   Args:
     gen_constant_beta_fn: a partial function to generate the constant beta
@@ -312,18 +308,13 @@ def generate_simulations(gen_constant_beta_fn,
       0.33)
     constant_pop_size: an int representing the constant population size (default
       10000)
-    fraction_infected_limits: A pair of floats in [0, 1] representing the limits
-      on the fraction of the population that will be infected at SPLIT_TIME.
-    prob_infection_constant: a float representing a constant that we multiply
-      the probability of becoming infected by. We noticed that a value of 1. led
-      to curves that were short in time and clustered in time. By changing this
-      to less than 1., our models fit better.
     gen_dynamic_beta_fn: A function to generate the dynamic beta
       values for each epidemic when passed num_locations and num_time_steps.
       None if the betas are all static.
 
   Returns:
-    trajectories: a xr.Dataset of the simulated infections over time
+    trajectories: a xr.Dataset containing the growth rate, covariates, weights,
+      population size, and recovery rate.
   """
   # generate growth rate for all samples,
   # this is constant between samples
@@ -353,6 +344,57 @@ def generate_simulations(gen_constant_beta_fn,
   trajectories['population_size'].data = constant_pop_size * np.ones(
       num_locations)
   trajectories['recovery_rate'].data = constant_gamma * np.ones(num_locations)
+  return trajectories
+
+
+def generate_simulations(gen_constant_beta_fn,
+                         num_samples,
+                         num_locations,
+                         num_time_steps=500,
+                         constant_gamma=0.33,
+                         constant_pop_size=10000,
+                         gen_dynamic_beta_fn=None,
+                         fraction_infected_limits=(.05, 1.),
+                         prob_infection_constant=0.2):
+  """Generate many samples of SIR curves.
+
+  Generate many SIR curves. Each sample contains num_locations.
+  The locations may have different covariates, and thus different trajectories.
+  However between samples the covariates are the same,
+  so the only difference is statistical.
+
+  Args:
+    gen_constant_beta_fn: a partial function to generate the constant beta
+      values for each epidemic when passed num_locations.
+    num_samples: an int representing the number of samples to run
+    num_locations: an int representing the number of locations to run in each
+      sample
+    num_time_steps: an int representing the number of simulation 'days'
+      (default 500)
+    constant_gamma: a float representing the constant recovery rate (default
+      0.33)
+    constant_pop_size: an int representing the constant population size (default
+      10000)
+    gen_dynamic_beta_fn: A function to generate the dynamic beta
+      values for each epidemic when passed num_locations and num_time_steps.
+      None if the betas are all static.
+    fraction_infected_limits: A pair of floats in [0, 1] representing the limits
+      on the fraction of the population that will be infected at SPLIT_TIME.
+    prob_infection_constant: a float representing a constant that we multiply
+      the probability of becoming infected by. We noticed that a value of 1. led
+      to curves that were short in time and clustered in time. By changing this
+      to less than 1., our models fit better.
+
+  Returns:
+    trajectories: a xr.Dataset of the simulated infections over time
+  """
+  trajectories = _helper_setup_sir_sim(gen_constant_beta_fn,
+                                       num_samples,
+                                       num_locations,
+                                       num_time_steps,
+                                       constant_gamma,
+                                       constant_pop_size,
+                                       gen_dynamic_beta_fn)
 
   # Initially, all trajectories start at time 0.
   # The actual start_time will be updated to be consistent with
