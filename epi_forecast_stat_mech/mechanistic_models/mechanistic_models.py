@@ -19,24 +19,39 @@ tfd = tfp.distributions
 Array = Union[float, jnp.DeviceArray, np.ndarray]
 
 
-EpidemicsRecord = collections.namedtuple(
-    "EpidemicsRecord",
-    ["t", "infections_over_time", "cumulative_infections"])
+EpidemicsRecord = collections.namedtuple("EpidemicsRecord", [
+    "t", "infections_over_time", "cumulative_infections", "dynamic_covariates"
+])
 
 
-def pack_epidemics_record_tuple(ds):
+def pack_epidemics_record_tuple(data):
+  """Convert from xarray to the internal EpidemicsRecord."""
+  # TODO(mcoram): Gaussian models probably need float32, but this straight
+  #   conversion is problematic. E.g. datetime.datetime(2020, 5, 1) -> 1.6E18.
+  tiled_time = np.tile(
+      np.expand_dims(data.time.values.astype(np.float32), 0),
+      (data.dims["location"], 1))
   # TODO(mcoram): Improve nan handling upstream and place guards.
-  new_infections = ds.new_infections.fillna(0).transpose("location", "time")
+  new_infections = data.new_infections.fillna(0).transpose("location", "time")
+  dynamic_covariates = data.data_vars.get("dynamic_covariates", None)
+  if dynamic_covariates is None:
+    dynamic_covariates = jnp.zeros(
+        (data.sizes["location"], data.sizes["time"], 0), dtype=np.float32)
+  else:
+    dynamic_covariates = dynamic_covariates.transpose(
+        "location", "time", "dynamic_covariate").values.astype(np.float32)
+  # TODO(mcoram): Improve nan handling upstream and place guards.
+  new_infections_cumsum = new_infections.cumsum("time", skipna=True)
   return EpidemicsRecord(
-      np.tile(
-          np.expand_dims(ds.time.values.astype(np.float32), 0),
-          (ds.dims["location"], 1)), new_infections.values.astype(np.float32),
-      np.cumsum(new_infections.values.astype(np.float32), axis=-1))
+      tiled_time,
+      new_infections.values.astype(np.float32),
+      new_infections_cumsum.values.astype(np.float32),
+      dynamic_covariates)
 
 
 @dataclasses.dataclass
 class FastPoisson:
-  """A Poisson distribution that uses a Normal approximation for large rate."""
+  """A Poisson distribution that uses a Normal approximation to sample for large rate."""
 
   rate: Array
   rate_split: float = 100.
@@ -55,6 +70,24 @@ class FastPoisson:
 
   def log_prob(self, *args, **kwargs):
     return tfd.Poisson(self.rate).log_prob(*args, **kwargs)
+
+
+def OverDispersedPoisson(mean, overdispersion):
+  """OverDispersedPoisson distribution.
+
+  Has mean: mean
+  Has variance: overdispersion * mean
+
+  Arguments:
+    mean: tensor of non-negative floats.
+    overdispersion: tensor of floats > 1 (strictly!).
+  Returns:
+    tfp.Distribution
+  """
+  return tfd.NegativeBinomial(
+      total_count=mean / (overdispersion - 1),
+      probs=(1. - 1. / overdispersion),
+      validate_args=False)
 
 
 class MechanisticModel:
@@ -158,8 +191,6 @@ class MechanisticModel:
     ...
 
 
-# TODO(dkochkov) Change intensity method to intensity_params method to include
-# multi-parametric distributions.
 # TODO(dkochkov) Consider adding rng to the state transition method.
 @dataclasses.dataclass
 class IntensityModel(MechanisticModel):
@@ -197,7 +228,7 @@ class IntensityModel(MechanisticModel):
     def _log_prob_step(state, new_cases_and_params):
       new_cases, current_params = new_cases_and_params
       intensity = self._intensity(current_params, state)
-      log_prob = self.new_infection_distribution(intensity).log_prob(new_cases)
+      log_prob = self.new_infection_distribution(*intensity).log_prob(new_cases)
       new_state = self._update_state(current_params, state, new_cases)
       return new_state, jnp.squeeze(log_prob)
 
@@ -245,7 +276,7 @@ class IntensityModel(MechanisticModel):
         current_rng, rng = jax.random.split(rng)
         intensity = self._intensity(params, state)
         new_cases = jnp.squeeze(
-            self.new_infection_distribution(intensity).sample(1, current_rng))
+            self.new_infection_distribution(*intensity).sample(1, current_rng))
         new_state = self._update_state(parameters, state, new_cases)
       return (new_state, rng), new_cases
 
@@ -263,6 +294,7 @@ class IntensityModel(MechanisticModel):
 
     start_state = self._initial_state(start_params, start_record)
     state_and_rng = (start_state, rng)
+    # TODO(mcoram): Fix the state part. And make a second for unroll.
     new_cases_and_params = (record.infections_over_time, params_for_record)
     state_and_rng, _ = jax.lax.scan(
         _transition, state_and_rng, new_cases_and_params)
@@ -277,11 +309,26 @@ class IntensityModel(MechanisticModel):
 class StepBasedViboudChowellModel(IntensityModel):
   """ViboudChowell mechanistic model."""
 
+  @property
+  def param_names(self):
+    return ("r", "a", "p", "K")
+
+  def encode_params(self, parameters):
+    return jnp.log(parameters)
+
+  @property
+  def encoded_param_names(self):
+    return ("log_r", "log_a", "log_p", "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((.1, .1, .1, .1))
+
   def _intensity(self, parameters, state):
     """Computes intensity given `parameters`, `state`."""
     r, a, p, k = self._split_and_scale_parameters(parameters)
     x = state
-    return jnp.maximum(r * x ** p * jnp.maximum(1 - (x / k), 1E-6) ** a, 0.1)
+    return (jnp.maximum(r * x ** p * jnp.maximum(1 - (x / k), 1E-6) ** a, 0.1),)
 
   def _update_state(self, parameters, state, new_cases):
     """Computes an update to the internal state of the model."""
@@ -356,6 +403,75 @@ class StepBasedGaussianModel(IntensityModel):
   def init_parameters():
     """Returns reasonable `parameters` for an initial guess."""
     return jnp.asarray([100., np.log(100.), np.log(1000.)])
+
+
+class StepBasedMultiplicativeGrowth(IntensityModel):
+  """MultiplicativeGrowth mechanistic model."""
+
+  new_infection_distribution: Callable = OverDispersedPoisson
+
+  @property
+  def param_names(self):
+    return ("base", "beta", "K")
+
+  def encode_params(self, parameters):
+    return jnp.log(parameters)
+
+  @property
+  def encoded_param_names(self):
+    return ("log_base", "log_beta", "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((.1, .1, .1))
+
+  def _split_and_scale_parameters(self, parameters):
+    """Splits parameters and scales them appropriately.
+
+
+    Args:
+      parameters: array containing parametrization of the model.
+
+    Returns:
+      (base, beta, K) parameters.
+    """
+    return jnp.split(jnp.exp(parameters), 3, axis=-1)
+
+  @staticmethod
+  def init_parameters():
+    """Returns reasonable `parameters` for an initial guess."""
+    return jnp.log(jnp.asarray([0.5, 0.75, 10000.]))
+
+  def _initial_state(self, parameters, initial_record):
+    """Initializes the hidden state of the model based on initial data."""
+    del parameters  # unused
+    return (jnp.maximum(initial_record.infections_over_time,
+                        1), initial_record.cumulative_infections)
+
+  def _update_state(self, parameters, state, o):
+    """Computes an update to the internal state of the model."""
+    o_hat, unused_overdispersion = self._intensity(parameters, state)
+    unused_old_o_smooth, old_cumulative_cases = state
+    base, beta, K = self._split_and_scale_parameters(parameters)
+    # Improve this: e.g. it should pay more attention to o when o is big.
+    eta = 0.25
+    o_smooth = eta * o + (1. - eta) * o_hat
+    cumulative_cases = old_cumulative_cases + o
+    return o_smooth, cumulative_cases
+
+  def _intensity(self, parameters, state):
+    """Computes intensity given `parameters`, `state`."""
+    base, beta, K = self._split_and_scale_parameters(parameters)
+    old_o_smooth, cumulative_cases = state
+    multiplier = jnp.squeeze(base + beta * jnp.maximum(0., (1. - cumulative_cases / K)))
+    o_hat = multiplier * old_o_smooth
+    overdispersion = 2.
+    return (jnp.maximum(o_hat, 0.1), overdispersion,)
+
+  def epidemic_observables(self, parameters, epidemics):
+    """See base class."""
+    return {"epidemic_size": parameters[..., -1:]}
+
 
 
 # TODO(jamieas): unify VC and Gaussian models as subclasses of `IntensityModel`.

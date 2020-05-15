@@ -34,15 +34,32 @@ class PoissonSampleTest(parameterized.TestCase):
 class MechanisticModelsTest(parameterized.TestCase):
 
   @parameterized.parameters(
-      dict(mech_model_cls=mechanistic_models.GaussianModel,
-           observed_duration=10, trajectory_length=20, expected_last_value=8.),
-      dict(mech_model_cls=mechanistic_models.ViboudChowellModel,
-           observed_duration=13, trajectory_length=24, expected_last_value=0.),
-      dict(mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
-           observed_duration=13, trajectory_length=24, expected_last_value=1.),
-      dict(mech_model_cls=mechanistic_models.StepBasedGaussianModel,
-           observed_duration=13, trajectory_length=24, expected_last_value=7.),
-      )
+      dict(
+          mech_model_cls=mechanistic_models.GaussianModel,
+          observed_duration=10,
+          trajectory_length=20,
+          expected_last_value=8.),
+      dict(
+          mech_model_cls=mechanistic_models.ViboudChowellModel,
+          observed_duration=13,
+          trajectory_length=24,
+          expected_last_value=0.),
+      dict(
+          mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
+          observed_duration=13,
+          trajectory_length=24,
+          expected_last_value=1.),
+      dict(
+          mech_model_cls=mechanistic_models.StepBasedGaussianModel,
+          observed_duration=13,
+          trajectory_length=24,
+          expected_last_value=7.),
+      dict(
+          mech_model_cls=mechanistic_models.StepBasedMultiplicativeGrowth,
+          observed_duration=13,
+          trajectory_length=24,
+          expected_last_value=327.),
+  )
   def testShapesAndLast(self, mech_model_cls, observed_duration,
                         trajectory_length, expected_last_value):
     """Tests that mechanistic models methods return values of expected shape."""
@@ -52,7 +69,8 @@ class MechanisticModelsTest(parameterized.TestCase):
     observed_epidemics = EpidemicsRecord(
         np.arange(observed_duration).astype(np.float32),
         np.arange(observed_duration).astype(np.float32),
-        np.cumsum(np.arange(observed_duration).astype(np.float32)))
+        np.cumsum(np.arange(observed_duration).astype(np.float32)),
+        np.zeros((observed_duration, 0)))
     predicted_epidemics_trajectory = mech_model.predict(
         mech_model_params, rng, observed_epidemics, trajectory_length)
     actual_shape = predicted_epidemics_trajectory.shape
@@ -68,11 +86,17 @@ class MechanisticModelsTest(parameterized.TestCase):
     last_value = predicted_epidemics_trajectory[-1]
     self.assertEqual(last_value, expected_last_value)
 
+  @parameterized.parameters(
+      dict(mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
+           observed_duration=13, trajectory_length=24),
+      dict(mech_model_cls=mechanistic_models.StepBasedGaussianModel,
+           observed_duration=13, trajectory_length=24),
+  )
   def testTimeDependentModels(
       self,
-      mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
-      observed_duration=13,
-      trajectory_length=24
+      mech_model_cls,
+      observed_duration,
+      trajectory_length
   ):
     """Test output shapes for models that allow time dependent parameters."""
     mech_model = mech_model_cls()
@@ -83,7 +107,8 @@ class MechanisticModelsTest(parameterized.TestCase):
     observed_epidemics = EpidemicsRecord(
         np.arange(observed_duration).astype(np.float32),
         np.arange(observed_duration).astype(np.float32),
-        np.cumsum(np.arange(observed_duration).astype(np.float32)))
+        np.cumsum(np.arange(observed_duration).astype(np.float32)),
+        np.zeros((observed_duration, 0)))
     predicted_epidemics_trajectory = mech_model.predict(
         mech_model_params, rng, observed_epidemics, trajectory_length)
     actual_shape = predicted_epidemics_trajectory.shape
