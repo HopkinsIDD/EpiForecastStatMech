@@ -57,9 +57,24 @@ class TestGenerateSirSimulations(absltest.TestCase):
         gen_dynamic_beta_fn=dynamic_beta_fn)
 
     shift_growth_rate = trajectories.growth_rate.shift(time=1)
-    num_diff_betas = (trajectories.growth_rate[:, :-1] != shift_growth_rate[:, 1:]).sum()
+    num_diff_betas = (trajectories.growth_rate[:, :-1] !=
+                      shift_growth_rate[:, 1:]).sum()
     assert num_diff_betas == self.num_epidemics
 
+  def test_social_distancing_sanity(self):
+    beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
+                                num_pred=self.num_important_cov,
+                                num_not_pred=self.num_unimportant_cov)
+    trajectories = sir_sim.generate_social_distancing_simulations(
+        beta_fn,
+        sir_sim.gen_social_distancing_weight,
+        self.num_simulations,
+        self.num_epidemics,
+        self.num_time_steps,
+        constant_pop_size=10000)
+    assert trajectories.new_infections.shape == (self.num_simulations,
+                                                 self.num_epidemics,
+                                                 self.num_time_steps)
 
 if __name__ == '__main__':
   absltest.main()
