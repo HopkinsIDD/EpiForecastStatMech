@@ -22,18 +22,19 @@ tfd = tfp.distributions
 config.parse_flags_with_absl()  # Necessary for running on TPU.
 
 
-class DummyEpidemicsRecord(
-    collections.namedtuple(
-        'DummyEpidemicsRecord',
-        ['t', 'infections_over_time', 'cumulative_infections'])):
+class DummyEpidemicsRecord(mechanistic_models.EpidemicsRecord):
 
   @classmethod
   def build(cls, rng, batch_size, time_steps):
     infections = tfd.Poisson(10).sample((batch_size, time_steps), seed=rng)
     cumulative = jnp.cumsum(infections, -1)
+    dynamic_covariates = jnp.zeros((batch_size, time_steps, 0))
     t = jnp.broadcast_to(jnp.arange(time_steps), cumulative.shape)
     return cls(
-        t=t, infections_over_time=infections, cumulative_infections=cumulative)
+        t=t,
+        infections_over_time=infections,
+        cumulative_infections=cumulative,
+        dynamic_covariates=dynamic_covariates)
 
 
 class MonteCarloTest(parameterized.TestCase):
@@ -57,7 +58,9 @@ class MonteCarloTest(parameterized.TestCase):
 
     rng = jax.random.PRNGKey(seed)
     params = jax.tree_map(jnp.ones, params_shape)
-    trajectories = monte_carlo.trajectories(rollout_fn, rng, params, nsamples)
+    nlocations = jax.tree_leaves(params)[0].shape[0]
+    trajectories = monte_carlo.trajectories(rollout_fn, rng, params, nlocations,
+                                            nsamples)
     batch_size = jax.tree_leaves(params)[0].shape[0]
     expected_shape = (batch_size, nsamples) + rollout_shape
     self.assertEqual(expected_shape, trajectories.shape)

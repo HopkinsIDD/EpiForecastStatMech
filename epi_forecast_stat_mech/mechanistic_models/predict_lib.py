@@ -21,7 +21,11 @@ def simulate_predictions(mech_model, mech_params, data, epidemics, time_steps,
 
   # Here we assume evenly spaced integer time values.
   epidemic_time = data.time.data
-  time_delta = epidemic_time[1] - epidemic_time[0]
+  try:
+    time_delta = epidemic_time[1] - epidemic_time[0]
+  except IndexError:  # time 1 may not exist.
+    # An alternative is to make it datetime.timedelta(1) for a calendar day.
+    time_delta = 1
   time = np.arange(1, time_steps + 1) * time_delta + epidemic_time[-1]
 
   location = data.location
@@ -49,4 +53,3 @@ def mech_params_array(data, mech_model, mech_params):
       coords=dict(
           location=data.location,
           param=list(mech_model.param_names)))
-

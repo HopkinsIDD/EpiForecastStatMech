@@ -6,7 +6,7 @@ import functools
 import jax
 
 
-def trajectories(rollout_fn, rng, args, nsamples):
+def trajectories(rollout_fn, rng, args, nlocations, nsamples):
   """Computes batches of `nsamples` trajectories for all `args`.
 
   Args:
@@ -21,8 +21,13 @@ def trajectories(rollout_fn, rng, args, nsamples):
     dimension 0 for all elements of `args` and `s` is the shape of the array
     returned by `rollout_fn`.
   """
-  rngs = jax.random.split(rng, nsamples)
-  return jax.vmap(jax.vmap(rollout_fn, [0, None]), [None, 0])(rngs, args)
+  rngs = jax.random.split(rng, nlocations)
+
+  def rollout_helper(rng, args):
+    rngs = jax.random.split(rng, nsamples)
+    return jax.vmap(rollout_fn, [0, None])(rngs, args)
+
+  return jax.vmap(rollout_helper, [0, 0])(rngs, args)
 
 
 @functools.partial(jax.jit, static_argnums=(0, 4, 5))
@@ -45,10 +50,12 @@ def trajectories_from_model(mechanistic_model, parameters, rng,
     dimension 0 for all elements of `parameters`.
   """
 
+  nlocations = jax.tree_leaves(parameters)[0].shape[0]
+
   def rollout_fn(rng_, args):
     params, obs = args
     return mechanistic_model.predict(
         params, rng_, obs, length, include_observed=False)
 
   return trajectories(rollout_fn, rng, (parameters, observed_epidemics),
-                      nsamples)
+                      nlocations, nsamples)
