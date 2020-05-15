@@ -198,7 +198,6 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
 
 
 def generate_ground_truth(population_size,
-                          infection_start_time,
                           beta,
                           gamma,
                           num_samples,
@@ -214,8 +213,6 @@ def generate_ground_truth(population_size,
   Args:
     population_size: a xr.DataArray representing the population size in each
       location
-    infection_start_time: a xr.DataArray representing the start time of the
-      infection in each location.
     beta: a xr.DataArray representing the growth rate of the disease in each
       location
     gamma: a xr.DataArray representing the recovery rate of the disease in each
@@ -246,7 +243,7 @@ def generate_ground_truth(population_size,
       'time': num_time_steps
   }).astype(int)
   # at each start time, we have 1 infection
-  new_infections[dict(time=infection_start_time)] = 1
+  new_infections[dict(time=0)] = 1
   # setup for t-0
   num_infected = new_infections.sel(time=0).copy()
 
@@ -256,7 +253,7 @@ def generate_ground_truth(population_size,
   if 'time' not in beta.dims:
     beta = beta.expand_dims({'time': new_infections.sizes['time']})
 
-  for t in range(0, new_infections.sizes['time']):
+  for t in range(1, new_infections.sizes['time']):
     # Calculate the probability that a person becomes infected
     # Python3 doesn't seem to work, so force a float
 
@@ -269,9 +266,6 @@ def generate_ground_truth(population_size,
 
     new_infections[dict(time=t)] = stats.binom.rvs(
         num_susceptible.astype(int), prob_infected)
-    # Don't overwrite the first infection at the start time
-    # TODO(edklein) this is a hack
-    new_infections[dict(time=infection_start_time)] = 1
 
     # Calculate the probability that a person recovers
     prob_recover = 1 - np.exp(-gamma)
@@ -368,9 +362,8 @@ def generate_simulations(gen_constant_beta_fn,
   # Initially, all trajectories start at time 0.
   # The actual start_time will be updated to be consistent with
   # fraction_infected being infected at SPLIT_TIME.
-  dummy_start_time = np.zeros((num_locations,), dtype=np.int32)
   trajectories['new_infections'] = generate_ground_truth(
-      trajectories.population_size, dummy_start_time, trajectories.growth_rate,
+      trajectories.population_size, trajectories.growth_rate,
       trajectories.recovery_rate, trajectories.sizes['sample'],
       trajectories.sizes['time'], prob_infection_constant)
   cases = trajectories.new_infections.cumsum('time')
