@@ -202,6 +202,119 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
   return ds
 
 
+def _helper_ground_truth_setup(population_size,
+                               num_samples,
+                               num_time_steps):
+  """A helper function that sets up time0 of an SIR simulation.
+
+  This helper function calculates the number of susceptible, infected, and
+  recovered individuals at the begining of a simulation. It returns these
+  values to be used as initial values in _helper_ground_truth_loop.
+
+  Args:
+    population_size: a xr.DataArray representing the population size in each
+      location
+    num_samples: an int representing the number of samples to run at each
+      location
+    num_time_steps: an int representing the number of simulation 'days' to run
+      at each location.
+
+  Returns:
+    new_infections: a DataArray with shape (location, sample, time).
+      The infections at time 0 are initialized to 1 in all locations/samples.
+    num_susceptible: a DataArray with shape (location, sample) containing the
+      number of susceptible individuals in each location/sample at time 0.
+    num_infected: a DataArray with shape (location, sample) containing the
+      number of infected individuals (1) in each location/sample at time 0.
+    num_recovered: a DataArray with shape (location, sample) containing the
+      number of recovered individuals in each location/sample at time 0.
+  """
+  num_locations = population_size.sizes['location']
+
+  num_recovered = data_model.new_dataarray({
+      'sample': num_samples,
+      'location': num_locations,
+  }).astype(int)
+
+  new_infections = data_model.new_dataarray({
+      'sample': num_samples,
+      'location': num_locations,
+      'time': num_time_steps
+  }).astype(int)
+  # at each start time, we have 1 infection
+  new_infections[dict(time=0)] = 1
+  # setup for t-0
+  num_infected = new_infections.sel(time=0).copy()
+
+  num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
+  num_susceptible -= num_infected
+  return new_infections, num_susceptible, num_infected, num_recovered
+
+
+def _helper_ground_truth_loop(num_susceptible, num_recovered, num_infected,
+                              beta_time_t, gamma, population_size,
+                              prob_infection_constant):
+  """A helper function to calculate SIR for one time step of an SIR simulation.
+
+  This helper function calculates the number of susceptible, infected, and
+  recovered individuals at one time step. It returns these values to be used as
+  initial values in the next call.
+
+  Args:
+    num_susceptible: a DataArray with shape (location, sample) containing the
+      number of susceptible individuals in each location/sample at time t.
+    num_infected: a DataArray with shape (location, sample) containing the
+      number of infected individuals (1) in each location/sample at time t.
+    num_recovered: a DataArray with shape (location, sample) containing the
+      number of recovered individuals in each location/sample at time t.
+    beta_time_t: a xr.DataArray representing the growth rate of the disease in
+      each location at time t.
+    gamma: a xr.DataArray representing the recovery rate of the disease in each
+      location
+    population_size: a xr.DataArray representing the population size in each
+      location
+    prob_infection_constant: a float representing a constant that we multiply
+      the probability of becoming infected by. We noticed that a value of 1. led
+      to curves that were short in time and clustered in time. By changing this
+      to less than 1., our models fit better.
+
+  Returns:
+    num_new_infections: a DataArray with shape (location, sample) containing the
+      number of *new* infections that occured at thime t+1.
+    num_susceptible: a DataArray with shape (location, sample) containing the
+      number of susceptible individuals in each location/sample at time t+1.
+    num_infected: a DataArray with shape (location, sample) containing the
+      number of infected individuals (1) in each location/sample at time t+1.
+    num_recovered: a DataArray with shape (location, sample) containing the
+      number of recovered individuals in each location/sample at time t+1.
+  """
+  # Calculate the probability that a person becomes infected
+  # Python3 doesn't seem to work, so force a float
+
+  frac_pop_infected = num_infected.astype(float) / population_size
+  prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta_time_t))
+  # Make sure prob_infected is between 0 and 1
+  prob_infected = prob_infected.where(prob_infected>0, 0)
+  prob_infected = prob_infected.where(prob_infected<1, 1)
+
+  # Determine the number of new infections
+  # By drawing from a binomial distribution
+  # Record the number of infections that occured at this time point
+  num_new_infections = stats.binom.rvs(num_susceptible.astype(int), prob_infected)
+
+  # Calculate the probability that a person recovers
+  prob_recover = 1 - np.exp(-gamma)
+
+  # Determine the number of recoveries
+  # by drawing from a binomial distribution
+  num_new_recoveries = stats.binom.rvs(num_infected, prob_recover)
+
+  num_susceptible -= num_new_infections
+  num_recovered += num_new_recoveries
+  num_infected += num_new_infections - num_new_recoveries
+  return num_new_infections, num_susceptible, num_recovered, num_infected
+
+
 def generate_ground_truth(population_size,
                           beta,
                           gamma,
@@ -235,56 +348,19 @@ def generate_ground_truth(population_size,
     new_infections: a xr.DataArray representing the new_infections at each
       (sample, location, time).
   """
-  num_locations = population_size.sizes['location']
 
-  num_recovered = data_model.new_dataarray({
-      'sample': num_samples,
-      'location': num_locations,
-  }).astype(int)
-
-  new_infections = data_model.new_dataarray({
-      'sample': num_samples,
-      'location': num_locations,
-      'time': num_time_steps
-  }).astype(int)
-  # at each start time, we have 1 infection
-  new_infections[dict(time=0)] = 1
-  # setup for t-0
-  num_infected = new_infections.sel(time=0).copy()
-
-  num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
-  num_susceptible -= num_infected
+  new_infections, num_susceptible, num_infected, num_recovered = _helper_ground_truth_setup(
+      population_size, num_samples, num_time_steps)
 
   if 'time' not in beta.dims:
     beta = beta.expand_dims({'time': new_infections.sizes['time']})
 
-  for t in range(1, new_infections.sizes['time']):
-    # Calculate the probability that a person becomes infected
-    # Python3 doesn't seem to work, so force a float
-
-    frac_pop_infected = num_infected.astype(float) / population_size
-    prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta[dict(time=t)]))
-
-    # Determine the number of new infections
-    # By drawing from a binomial distribution
-    # Record the number of infections that occured at this time point
-
-    new_infections[dict(time=t)] = stats.binom.rvs(
-        num_susceptible.astype(int), prob_infected)
-
-    # Calculate the probability that a person recovers
-    prob_recover = 1 - np.exp(-gamma)
-
-    # Determine the number of recoveries
-    # by drawing from a binomial distribution
-    num_new_recoveries = stats.binom.rvs(num_infected, prob_recover)
-
-    # Update counts
-    num_new_infections = new_infections[dict(time=t)]
-
-    num_susceptible -= num_new_infections
-    num_recovered += num_new_recoveries
-    num_infected += num_new_infections - num_new_recoveries
+  for t in new_infections.time[1:]:
+    beta_time_t = beta[dict(time=t)]
+    num_new_infections, num_susceptible, num_recovered, num_infected = _helper_ground_truth_loop(
+        num_susceptible, num_recovered, num_infected, beta_time_t, gamma,
+        population_size, prob_infection_constant)
+    new_infections[dict(time=t)] = num_new_infections
 
   return new_infections
 
@@ -332,7 +408,7 @@ def generate_social_distancing_ground_truth(population_size,
 
   Returns:
     beta_td: a xr.DataArray representing the time-dependent growth rate at each
-      (sample, locatino, time).
+      (sample, location, time).
     dynamic_covariate: a xr.DataArray representing the time-dependent covariate
       at each (sample, location, time). Currently fixed to be one covariate with
       a value of either 0 or 1.
@@ -341,27 +417,10 @@ def generate_social_distancing_ground_truth(population_size,
     new_infections: a xr.DataArray representing the new_infections at each
       (sample, location, time).
   """
+
+  new_infections, num_susceptible, num_infected, num_recovered = _helper_ground_truth_setup(
+      population_size, num_samples, num_time_steps)
   num_locations = population_size.sizes['location']
-
-  num_recovered = data_model.new_dataarray({
-      'sample': num_samples,
-      'location': num_locations,
-  }).astype(int)
-
-  new_infections = data_model.new_dataarray({
-      'sample': num_samples,
-      'location': num_locations,
-      'time': num_time_steps
-  }).astype(int)
-
-  # at time 0, we have 1 infection
-  new_infections[dict(time=0)] = 1
-
-  # setup for t-0
-  num_infected = new_infections.sel(time=0).copy()
-
-  num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
-  num_susceptible -= num_infected
 
   # need to compute the change in growth rate at a given
   # infection load. This will be represented by a time-dependent covariate
@@ -390,34 +449,11 @@ def generate_social_distancing_ground_truth(population_size,
     dynamic_covariate[dict(time=t)] = infection_threshold.astype(int)
     beta_td[dict(time=t)] = beta + (dynamic_weights @ infection_threshold.astype(int))
 
-    # Calculate the probability that a person becomes infected
-    # Python3 doesn't seem to work, so force a float
-    frac_pop_infected = num_infected.astype(float) / population_size
-    prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta_td[dict(time=t)]))
-
-    # Make sure prob_infected is between 0 and 1
-    prob_infected = prob_infected.where(prob_infected>0, 0)
-    prob_infected = prob_infected.where(prob_infected<1, 1)
-
-    # Determine the number of new infections
-    # By drawing from a binomial distribution
-    # Record the number of infections that occured at this time point
-    new_infections[dict(time=t)] = stats.binom.rvs(
-        num_susceptible.astype(int), prob_infected)
-
-    # Calculate the probability that a person recovers
-    prob_recover = 1 - np.exp(-gamma)
-
-    # Determine the number of recoveries
-    # by drawing from a binomial distribution
-    num_new_recoveries = stats.binom.rvs(num_infected, prob_recover)
-
-    # Update counts
-    num_new_infections = new_infections[dict(time=t)]
-
-    num_susceptible -= num_new_infections
-    num_recovered += num_new_recoveries
-    num_infected += num_new_infections - num_new_recoveries
+    beta_time_t = beta_td[dict(time=t)]
+    num_new_infections, num_susceptible, num_recovered, num_infected = _helper_ground_truth_loop(
+        num_susceptible, num_recovered, num_infected, beta_time_t, gamma,
+        population_size, prob_infection_constant)
+    new_infections[dict(time=t)] = num_new_infections
 
     # Check if we need to update growth rate
     total_infected = population_size - num_susceptible
