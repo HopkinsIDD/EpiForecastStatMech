@@ -9,12 +9,23 @@ import xarray
 from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
 
 
-def simulate_predictions(mech_model, mech_params, data, epidemics, time_steps,
-                         num_samples, rng):
+def simulate_predictions(mech_model,
+                         mech_params,
+                         data,
+                         epidemics,
+                         time_steps,
+                         num_samples,
+                         rng,
+                         include_observed=False):
 
-  predictions = monte_carlo.trajectories_from_model(mech_model, mech_params,
-                                                    rng, epidemics, time_steps,
-                                                    num_samples)
+  predictions = monte_carlo.trajectories_from_model(
+      mech_model,
+      mech_params,
+      rng,
+      epidemics,
+      time_steps,
+      num_samples,
+      include_observed)
 
   # TODO(jamieas): consider indexing by seed.
   sample = np.arange(num_samples)
@@ -27,6 +38,8 @@ def simulate_predictions(mech_model, mech_params, data, epidemics, time_steps,
     # An alternative is to make it datetime.timedelta(1) for a calendar day.
     time_delta = 1
   time = np.arange(1, time_steps + 1) * time_delta + epidemic_time[-1]
+  if include_observed:
+    time = np.concatenate((epidemic_time, time))
 
   location = data.location
 

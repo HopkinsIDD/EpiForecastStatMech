@@ -66,18 +66,31 @@ class MonteCarloTest(parameterized.TestCase):
     self.assertEqual(expected_shape, trajectories.shape)
 
   @parameterized.parameters(
-      dict(batch_size=5, time_steps=7, nsamples=4, seed=0),
-      dict(batch_size=4, time_steps=17, nsamples=3, seed=1))
-  def testTrajectoriesFromModelShape(self, batch_size, time_steps, nsamples,
-                                     seed):
+      dict(
+          batch_size=5,
+          time_steps=7,
+          final_size=7,
+          nsamples=4,
+          seed=0,
+          include_observed=False),
+      dict(
+          batch_size=4,
+          time_steps=17,
+          final_size=17 * 2,
+          nsamples=3,
+          seed=1,
+          include_observed=True))
+  def testTrajectoriesFromModelShape(self, batch_size, time_steps, final_size,
+                                     nsamples, seed, include_observed):
     model = mechanistic_models.ViboudChowellModel()
     rng0, rng1, rng2 = jax.random.split(jax.random.PRNGKey(seed), 3)
     params = tfd.Poisson(30).sample([batch_size, 4], seed=rng0)
     epidemics = DummyEpidemicsRecord.build(rng1, batch_size, time_steps)
     trajectories = monte_carlo.trajectories_from_model(model, params, rng2,
                                                        epidemics, time_steps,
-                                                       nsamples)
-    expected_shape = (batch_size, nsamples, time_steps)
+                                                       nsamples,
+                                                       include_observed)
+    expected_shape = (batch_size, nsamples, final_size)
     self.assertEqual(expected_shape, trajectories.shape)
 
 
