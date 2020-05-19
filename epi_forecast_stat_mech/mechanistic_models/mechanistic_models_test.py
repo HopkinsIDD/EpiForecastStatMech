@@ -45,6 +45,16 @@ class MechanisticModelsTest(parameterized.TestCase):
           trajectory_length=24,
           expected_last_value=0.),
       dict(
+          mech_model_cls=mechanistic_models.GaussianModelPseudoLikelihood,
+          observed_duration=10,
+          trajectory_length=20,
+          expected_last_value=8.),
+      dict(
+          mech_model_cls=mechanistic_models.ViboudChowellModelPseudoLikelihood,
+          observed_duration=13,
+          trajectory_length=24,
+          expected_last_value=0.),
+      dict(
           mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
           observed_duration=13,
           trajectory_length=24,

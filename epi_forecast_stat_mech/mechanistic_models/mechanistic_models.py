@@ -16,6 +16,8 @@ import tensorflow_probability as tfp
 tfp = tfp.experimental.substrates.jax
 tfd = tfp.distributions
 
+from epi_forecast_stat_mech.statistical_models import probability as stat_prob
+
 Array = Union[float, jnp.DeviceArray, np.ndarray]
 
 
@@ -702,3 +704,30 @@ class GaussianModel(MechanisticModel):
     """See base class."""
     # Consider using the location of the peak as well.
     return {"epidemic_size": parameters[..., -1:]}
+
+
+@dataclasses.dataclass
+class ViboudChowellModelPseudoLikelihood(ViboudChowellModel):
+  """ViboudChowell mechanistic model with a pseudo-likelihood criterion."""
+
+  def log_likelihood(self, parameters, epidemics):
+    """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
+    # We treat the calculations as if they are conditional on observation[0]
+    # for consistency with the other VC code. So the intensity and observations
+    # vectors are one short, and the shortfall is filled in with 0. at the end.
+    intensity = self.intensity(parameters, epidemics.cumulative_infections[:-1])
+    observations = epidemics.infections_over_time[1:]
+    log_probs = stat_prob.pseudo_poisson_log_probs(intensity, observations)
+    return jnp.concatenate([jnp.zeros(1), log_probs])
+
+
+@dataclasses.dataclass
+class GaussianModelPseudoLikelihood(GaussianModel):
+  """Mechanistic model of Gaussian shape with a pseudo-likelihood criterion."""
+
+  def log_likelihood(self, parameters, epidemics):
+    """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
+    intensity = self.intensity(parameters, epidemics.t)
+    observations = epidemics.infections_over_time
+    log_probs = stat_prob.pseudo_poisson_log_probs(intensity, observations)
+    return log_probs

@@ -235,11 +235,14 @@ def get_estimator_dict(
     fit_seed=42,
     list_of_prior_fns=(None, laplace_prior),
     list_of_mech_models=(mechanistic_models.ViboudChowellModel,
-                         mechanistic_models.GaussianModel),
+                         mechanistic_models.GaussianModel,
+                         mechanistic_models.ViboudChowellModelPseudoLikelihood,
+                         mechanistic_models.GaussianModelPseudoLikelihood,
+                         ),
     list_of_stat_module=(network_models.LinearModule,
                          network_models.PerceptronModule),
     list_of_prior_names=("None", "Laplace"),
-    list_of_mech_names=("vc", "Gaussian"),
+    list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL"),
     list_of_stat_names=("Linear", "MLP")):
 
   # Create an iterator
