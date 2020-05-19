@@ -333,12 +333,18 @@ class StepBasedViboudChowellModel(IntensityModel):
   def _update_state(self, parameters, state, new_cases):
     """Computes an update to the internal state of the model."""
     del parameters  # unused
-    return state + new_cases
+    # Skip state update if new_cases is nan (if-based implemention breaks jit).
+    return jnp.where(
+        jnp.isnan(new_cases),
+        state,
+        state + new_cases)
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
     del parameters  # unused
-    return initial_record.cumulative_infections
+    return jnp.where(jnp.isnan(initial_record.cumulative_infections),
+                    0.,
+                    initial_record.cumulative_infections)
 
   @staticmethod
   def init_parameters():
@@ -377,6 +383,7 @@ class StepBasedGaussianModel(IntensityModel):
   def _update_state(self, parameters, state, new_cases):
     """Computes an update to the internal state of the model."""
     del parameters, new_cases  # unused
+    # We choose to advance time whether or not the current new_cases is nan.
     return state + 1.
 
   def _initial_state(self, parameters, initial_record):
@@ -445,25 +452,35 @@ class StepBasedMultiplicativeGrowth(IntensityModel):
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
     del parameters  # unused
-    return (jnp.maximum(initial_record.infections_over_time,
-                        1), initial_record.cumulative_infections)
+    return (jnp.maximum(jnp.nan_to_num(initial_record.infections_over_time), 1),
+            jnp.nan_to_num(initial_record.cumulative_infections))
 
   def _update_state(self, parameters, state, o):
     """Computes an update to the internal state of the model."""
     o_hat, unused_overdispersion = self._intensity(parameters, state)
-    unused_old_o_smooth, old_cumulative_cases = state
+    old_o_smooth, old_cumulative_cases = state
     base, beta, K = self._split_and_scale_parameters(parameters)
     # Improve this: e.g. it should pay more attention to o when o is big.
     eta = 0.25
     o_smooth = eta * o + (1. - eta) * o_hat
     cumulative_cases = old_cumulative_cases + o
-    return o_smooth, cumulative_cases
+    # Skip the update if new_cases == o is np.nan.
+    final_o_smooth = jnp.where(
+        jnp.isnan(o),
+        old_o_smooth,
+        o_smooth)
+    final_cumulative_cases = jnp.where(
+        jnp.isnan(o),
+        old_cumulative_cases,
+        cumulative_cases)
+    return final_o_smooth, final_cumulative_cases
 
   def _intensity(self, parameters, state):
     """Computes intensity given `parameters`, `state`."""
     base, beta, K = self._split_and_scale_parameters(parameters)
     old_o_smooth, cumulative_cases = state
-    multiplier = jnp.squeeze(base + beta * jnp.maximum(0., (1. - cumulative_cases / K)))
+    multiplier = jnp.squeeze(base + beta *
+                             jnp.maximum(0., (1. - cumulative_cases / K)))
     o_hat = multiplier * old_o_smooth
     overdispersion = 2.
     return (jnp.maximum(o_hat, 0.1), overdispersion,)
