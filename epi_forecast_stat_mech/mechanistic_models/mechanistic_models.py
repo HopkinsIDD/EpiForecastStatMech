@@ -32,7 +32,7 @@ def pack_epidemics_record_tuple(data):
       np.expand_dims(data.time.values.astype(np.float32), 0),
       (data.dims["location"], 1))
   # TODO(mcoram): Improve nan handling upstream and place guards.
-  new_infections = data.new_infections.fillna(0).transpose("location", "time")
+  new_infections = data.new_infections.transpose("location", "time")
   dynamic_covariates = data.data_vars.get("dynamic_covariates", None)
   if dynamic_covariates is None:
     dynamic_covariates = jnp.zeros(
@@ -562,7 +562,7 @@ class ViboudChowellModel(MechanisticModel):
       trajectory of predicted infections of length `length` or
       `len(observed_epidemics) + length` if `include_observed` is True.
     """
-    cumulative_cases = jnp.sum(observed_epidemics.infections_over_time)
+    cumulative_cases = observed_epidemics.cumulative_infections[-1]
     def _step(rng_and_cumulative, _):
       rng, cumulative_cases = rng_and_cumulative
       next_rng, rng = jax.random.split(rng)
