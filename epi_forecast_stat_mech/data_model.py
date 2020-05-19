@@ -294,3 +294,51 @@ def calculate_infection_sums(ds):
   ds['total_infections'].attrs['description'] = 'Total infections.'
 
   return ds
+
+
+def compute_integer_time(trajectories):
+  """Define integer time 0 as the time of the first infection."""
+  time = trajectories.time
+  if len(time) == 0:
+    return time.astype('long')
+  has_infections = trajectories.new_infections.sum('location', skipna=True) > 0
+  if not has_infections.any():
+    time0 = time.isel(time=-1)
+  else:
+    time0 = time.isel(time=np.where(has_infections.data)[0][0])
+  if len(time) == 1:
+    if np.issubdtype(time.dtype, np.datetime64):
+      delta_t = np.timedelta64(1, 'D')
+    else:
+      delta_t = 1
+  else:
+    diff_time = time.diff('time')
+    delta_t = diff_time[0].item()
+    assert (diff_time == diff_time[0]).all().item()
+  integer_time = ((time - time0).astype('long') // delta_t)
+  return integer_time
+
+
+def compute_numpy_index_time(trajectories):
+  """numpy_index_time is just np.arange. Avoid this if possible."""
+  raw_time = np.arange(trajectories.sizes['time'])
+  numpy_time = xr.DataArray(
+      raw_time, dims=('time',), coords=dict(time=raw_time))
+  return numpy_time
+
+
+def convert_data_to_integer_time(trajectories, use_numpy_index_time=False):
+  """Store original_time and replace time with integer time."""
+  if trajectories.coords.get('original_time', None):
+    assert np.issubdtype(trajectories.time.dtype, np.integer), (
+        'Integer time expected, because original_time is present.')
+    return trajectories
+  time = trajectories.time
+  if use_numpy_index_time:
+    integer_time = compute_numpy_index_time(trajectories)
+  else:
+    integer_time = compute_integer_time(trajectories)
+  trajectories = trajectories.copy()
+  trajectories['original_time'] = time
+  trajectories['time'] = integer_time
+  return trajectories
