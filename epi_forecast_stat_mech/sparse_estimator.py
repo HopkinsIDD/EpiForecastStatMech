@@ -276,6 +276,5 @@ def get_estimator_dict():
   estimator_dict['sparse_classic'] = SparseEstimator()
   estimator_dict['sparse_gaussian'] = SparseEstimator(
       intensity_family=gaussian.GaussianFamily,
-      initializer=functools.partial(
-          sparse.common_fit_initializer, use_nelder_mead=True))
+      initializer=sparse.gaussian_initializer_using_mode)
   return estimator_dict

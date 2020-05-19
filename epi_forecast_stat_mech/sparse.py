@@ -13,6 +13,8 @@ from .tf_common import *
 from .flatten_util import ravel_pytree
 from . import soft_laplace
 
+from epi_forecast_stat_mech import data_model
+
 
 # Process mcmc output helpers
 
@@ -208,6 +210,8 @@ class DemoIntensityFamily(object):
     trajectories0 = self.trajectories0
     if can_extrapolate:
       trajectories0_hat = DummyData()
+      if len(trajectories0.time) == 0:
+        return
       trajectories0_hat.time = np.arange(round(np.max(tf_float(trajectories0.time)) * 1.5) + 5)
     else:
       trajectories0_hat = trajectories0
@@ -305,23 +309,16 @@ class DemoIntensityFamily(object):
 
 """## Fit utilities."""
 
-def make_demo_intensity_list(intensity_family, trajectories, align_time_to_first=True):
+def make_demo_intensity_list(intensity_family, trajectories):
+  if not np.issubdtype(trajectories.time.dtype, np.integer):
+    # TODO(mcoram): Resolve integer time issues upstream.
+    trajectories = data_model.convert_data_to_integer_time(
+      trajectories, use_numpy_index_time=True)
+  assert np.issubdtype(trajectories.time.dtype,
+                       np.integer), 'Integer time required.'
   accum = []
   for location, nominal_trajectory in trajectories.groupby('location'):
     trajectory = nominal_trajectory.where(~nominal_trajectory.new_infections.isnull(), drop=True).copy()
-    if align_time_to_first:
-      try:
-        first_case_ix = np.where(trajectory.new_infections > 0)[0][0]
-      except IndexError:
-        first_case_ix = len(trajectory.new_infections)
-      integer_day = trajectory.time.values
-      if first_case_ix < len(trajectory.new_infections):
-        integer_day = integer_day - integer_day[first_case_ix]
-      else:
-        if first_case_ix >= 1:
-          integer_day = integer_day - integer_day[first_case_ix - 1]
-      trajectory['time'] = xarray.DataArray(integer_day, dims=('time',), coords=(integer_day,))
-      trajectory = trajectory.isel(time=slice(first_case_ix, len(trajectory.new_infections)), drop=True)
     accum.append(
         DemoIntensityFamily(intensity_family).set_trajectory(
             trajectory))
@@ -846,3 +843,22 @@ def powell_fit_initializer(
       **kwargs)
   combo_params_init2 = result.combo_params
   return combo_params_init2
+
+
+def gaussian_initializer_using_mode(
+    intensity_family,
+    data,
+    unused_penalty_scale,
+    unused_mech_bottom_scale,
+    **unused_kwargs):
+  if intensity_family.name != 'Gaussian':
+    raise ValueError(
+        'gaussian_initializer_using_mode only intended for Gaussian intensity_family.'
+    )
+  modal_day = data.time.isel(
+      time=data.new_infections.sum('location', skipna=True).argmax(
+          'time').item())
+  model_dims = get_model_dims(intensity_family, data)
+  params1 = np.float(intensity_family.params0)
+  params1[0] = modal_day.item()
+  return combo_params_from_inits(params1, model_dims, alpha_init=None)
