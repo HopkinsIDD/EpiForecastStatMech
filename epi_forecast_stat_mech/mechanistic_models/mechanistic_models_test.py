@@ -37,41 +37,33 @@ class MechanisticModelsTest(parameterized.TestCase):
       dict(
           mech_model_cls=mechanistic_models.GaussianModel,
           observed_duration=10,
-          trajectory_length=20,
-          expected_last_value=8.),
+          trajectory_length=20),
       dict(
           mech_model_cls=mechanistic_models.ViboudChowellModel,
           observed_duration=13,
-          trajectory_length=24,
-          expected_last_value=0.),
+          trajectory_length=24),
       dict(
           mech_model_cls=mechanistic_models.GaussianModelPseudoLikelihood,
           observed_duration=10,
-          trajectory_length=20,
-          expected_last_value=8.),
+          trajectory_length=20),
       dict(
           mech_model_cls=mechanistic_models.ViboudChowellModelPseudoLikelihood,
           observed_duration=13,
-          trajectory_length=24,
-          expected_last_value=0.),
+          trajectory_length=24),
       dict(
           mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
           observed_duration=13,
-          trajectory_length=24,
-          expected_last_value=1.),
+          trajectory_length=24),
       dict(
           mech_model_cls=mechanistic_models.StepBasedGaussianModel,
           observed_duration=13,
-          trajectory_length=24,
-          expected_last_value=7.),
+          trajectory_length=24),
       dict(
           mech_model_cls=mechanistic_models.StepBasedMultiplicativeGrowthModel,
           observed_duration=13,
-          trajectory_length=24,
-          expected_last_value=327.),
+          trajectory_length=24),
   )
-  def testShapesAndLast(self, mech_model_cls, observed_duration,
-                        trajectory_length, expected_last_value):
+  def testShapes(self, mech_model_cls, observed_duration, trajectory_length):
     """Tests that mechanistic models methods return values of expected shape."""
     mech_model = mech_model_cls()
     mech_model_params = mech_model.init_parameters()
@@ -92,9 +84,6 @@ class MechanisticModelsTest(parameterized.TestCase):
     actual_shape = model_log_prob.shape
     expected_shape = (observed_duration,)
     self.assertEqual(actual_shape, expected_shape)
-
-    last_value = predicted_epidemics_trajectory[-1]
-    self.assertEqual(last_value, expected_last_value)
 
   @parameterized.parameters(
       dict(mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
