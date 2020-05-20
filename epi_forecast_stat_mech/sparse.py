@@ -859,6 +859,7 @@ def gaussian_initializer_using_mode(
       time=data.new_infections.sum('location', skipna=True).argmax(
           'time').item())
   model_dims = get_model_dims(intensity_family, data)
-  params1 = np.float(intensity_family.params0)
-  params1[0] = modal_day.item()
+  params1_np = np_float(intensity_family.params0._x)
+  params1_np[0] = modal_day.item()
+  params1 = intensity_family.params_wrapper().reset(params1_np)
   return combo_params_from_inits(params1, model_dims, alpha_init=None)

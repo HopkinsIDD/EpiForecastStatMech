@@ -25,7 +25,7 @@ class TestHighLevelSparseEstimator(absltest.TestCase):
     # These arguments are chosen to make the test faster.
     estimator = sparse_estimator.SparseEstimator(
         initializer=sparse.predefined_constant_initializer,
-        optimizer=functools.partial(sparse._adam_optim, max_iter=50),
+        optimizer=functools.partial(sparse._adam_optim, max_iter=10),
         penalty_factor_grid=np.exp(
             np.linspace(np.log(.1), np.log(1000.), num=5))).fit(data)
     predictions = estimator.predict(prediction_length, num_samples)
