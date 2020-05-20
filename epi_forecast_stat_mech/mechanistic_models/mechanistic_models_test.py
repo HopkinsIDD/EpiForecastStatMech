@@ -65,7 +65,7 @@ class MechanisticModelsTest(parameterized.TestCase):
           trajectory_length=24,
           expected_last_value=7.),
       dict(
-          mech_model_cls=mechanistic_models.StepBasedMultiplicativeGrowth,
+          mech_model_cls=mechanistic_models.StepBasedMultiplicativeGrowthModel,
           observed_duration=13,
           trajectory_length=24,
           expected_last_value=327.),
@@ -100,6 +100,8 @@ class MechanisticModelsTest(parameterized.TestCase):
       dict(mech_model_cls=mechanistic_models.StepBasedViboudChowellModel,
            observed_duration=13, trajectory_length=24),
       dict(mech_model_cls=mechanistic_models.StepBasedGaussianModel,
+           observed_duration=13, trajectory_length=24),
+      dict(mech_model_cls=mechanistic_models.StepBasedMultiplicativeGrowthModel,
            observed_duration=13, trajectory_length=24),
   )
   def testTimeDependentModels(

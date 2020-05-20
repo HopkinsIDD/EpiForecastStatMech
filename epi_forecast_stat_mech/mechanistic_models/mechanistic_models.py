@@ -273,13 +273,13 @@ class IntensityModel(MechanisticModel):
       state, rng = state_and_rng
       new_cases, params = new_cases_and_params
       if new_cases is not None:
-        new_state = self._update_state(parameters, state, new_cases)
+        new_state = self._update_state(params, state, new_cases)
       else:
         current_rng, rng = jax.random.split(rng)
         intensity = self._intensity(params, state)
         new_cases = jnp.squeeze(
             self.new_infection_distribution(*intensity).sample(1, current_rng))
-        new_state = self._update_state(parameters, state, new_cases)
+        new_state = self._update_state(params, state, new_cases)
       return (new_state, rng), new_cases
 
     observed_record_length = observed_epidemic_record.t.shape[0]
@@ -414,7 +414,7 @@ class StepBasedGaussianModel(IntensityModel):
     return jnp.asarray([100., np.log(100.), np.log(1000.)])
 
 
-class StepBasedMultiplicativeGrowth(IntensityModel):
+class StepBasedMultiplicativeGrowthModel(IntensityModel):
   """MultiplicativeGrowth mechanistic model."""
 
   new_infection_distribution: Callable = OverDispersedPoisson
@@ -444,7 +444,8 @@ class StepBasedMultiplicativeGrowth(IntensityModel):
     Returns:
       (base, beta, K) parameters.
     """
-    return jnp.split(jnp.exp(parameters), 3, axis=-1)
+    tuple_form = (base, beta, K) = jnp.exp(parameters)
+    return tuple_form
 
   @staticmethod
   def init_parameters():
@@ -481,8 +482,7 @@ class StepBasedMultiplicativeGrowth(IntensityModel):
     """Computes intensity given `parameters`, `state`."""
     base, beta, K = self._split_and_scale_parameters(parameters)
     old_o_smooth, cumulative_cases = state
-    multiplier = jnp.squeeze(base + beta *
-                             jnp.maximum(0., (1. - cumulative_cases / K)))
+    multiplier = base + beta * jnp.maximum(0., (1. - cumulative_cases / K))
     o_hat = multiplier * old_o_smooth
     overdispersion = 2.
     return (jnp.maximum(o_hat, 0.1), overdispersion,)
