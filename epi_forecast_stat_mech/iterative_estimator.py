@@ -180,6 +180,12 @@ class IterativeEstimator(estimator_base.Estimator):
                                          self.mech_params_stack)
 
   @property
+  def mech_params_hat(self):
+    self._check_fitted()
+    return predict_lib.mech_params_array(self.data, self.mech_model,
+                                         self.mech_params_hat_stack)
+
+  @property
   def encoded_mech_params(self):
     self._check_fitted()
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,

@@ -35,7 +35,8 @@ class TestHighLevelSparseEstimator(absltest.TestCase):
     self.assertLen(predictions.sample, num_samples)
     _ = estimator.alpha.to_netcdf()
     _ = estimator.intercept.to_netcdf()
-    _ = estimator.mech_params
+    _ = estimator.mech_params.to_netcdf()
+    _ = estimator.mech_params_hat.to_netcdf()
 
 
 if __name__ == '__main__':

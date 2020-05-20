@@ -185,10 +185,26 @@ class SparseEstimator(estimator_base.Estimator):
     return xarray.DataArray(self.mech_params_df)
 
   @property
+  def mech_params_hat(self):
+    return xarray.DataArray(self.mech_params_hat_df)
+
+  @property
   def mech_params_df(self):
     self._check_fitted()
     accum = []
     for mp in self.combo_params.mech_params_raw:
+      wrapped_mp = self.intensity_family.params_wrapper().reset(mp)
+      accum.append(wrapped_mp.as_tuple())
+    return pd.DataFrame(
+        accum,
+        columns=pd.Index(self.intensity_family.param_names, name='param'),
+        index=self.data.location.to_index())
+
+  @property
+  def mech_params_hat_df(self):
+    self._check_fitted()
+    accum = []
+    for mp in np_float(self.result.mech_params_hat_stack):
       wrapped_mp = self.intensity_family.params_wrapper().reset(mp)
       accum.append(wrapped_mp.as_tuple())
     return pd.DataFrame(

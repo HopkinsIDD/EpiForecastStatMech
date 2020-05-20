@@ -48,7 +48,7 @@ class TestHighLevelStatMech(absltest.TestCase):
     data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
     estimator = high_level.StatMechEstimator(train_steps=1000).fit(data)
 
-    _ = estimator.mech_params
+    _ = estimator.mech_params.to_netcdf()
     predictions = estimator.predict(prediction_length, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
     self.assertLen(predictions.time, prediction_length)
@@ -88,7 +88,8 @@ class TestHighLevelIterativeEstimator(absltest.TestCase):
     estimator = high_level.IterativeEstimator(
         stat_estimators=mean_estimators).fit(data)
 
-    _ = estimator.mech_params
+    _ = estimator.mech_params.to_netcdf()
+    _ = estimator.mech_params_hat.to_netcdf()
     predictions = estimator.predict(prediction_length, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
     self.assertLen(predictions.time, prediction_length)
