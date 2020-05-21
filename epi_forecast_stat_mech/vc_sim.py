@@ -109,8 +109,9 @@ def generate_ground_truth(pred_size, r, p, num_samples, num_time_steps):
   # start with 1 infected individual at time t=0
   total_infected = xr.ones_like(new_infections.sum('time'))
   frac_infected = total_infected.astype(float) / pred_size
+  new_infections[dict(time=0)] = total_infected
 
-  for t in range(num_time_steps):
+  for t in range(1, num_time_steps):
     # Determine the number of new infections
     # by drawing from a poisson distribution
     # TODO(edklein) is this right?
