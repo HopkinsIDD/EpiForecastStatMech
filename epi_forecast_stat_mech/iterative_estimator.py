@@ -47,13 +47,31 @@ class IterativeEstimator(estimator_base.Estimator):
   def save(self, file_out):
     pickle.dump(self, file_out)
 
-  def __init__(self, stat_estimators=None, mech_model=None):
+  def __init__(self,
+               stat_estimators=None,
+               mech_model=None,
+               hat_interpolation_alpha=0.5,
+               iter_max=100):
+    """Construct an IterativeEstimator.
+
+    Args:
+      stat_estimators: A dictionary with an sklearn regressor for each
+        encoded_param_name of the mech_model. Using a defaultdict is a
+        convenient way to impose a default type of regressor, e.g.:
+        collections.defaultdict(lambda: sklearn.ensemble.RandomForestRegressor(
+          ...)). The fitted estimators will be saved in this dictionary, which
+        is also saved on the instance.
+      mech_model: An instance of a MechanisticModel.
+      hat_interpolation_alpha: float between 0. and 1. representing how much
+        to move toward the newly estimated mech_params_hat in each loop.
+      iter_max: positive integer. How many iterative loops to perform.
+    """
     if stat_estimators is None:
       stat_estimators = collections.defaultdict(
           lambda: sklearn.ensemble.RandomForestRegressor(n_estimators=50))
     self.stat_estimators = stat_estimators
-    self.hat_interpolation_alpha = 0.5
-    self.iter_max = 100
+    self.hat_interpolation_alpha = hat_interpolation_alpha
+    self.iter_max = iter_max
     if mech_model is None:
       mech_model = mechanistic_models.ViboudChowellModel()
     self.mech_model = mech_model
