@@ -135,7 +135,10 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
                   trajectories['final_size']).round()
   hit_times = np.apply_along_axis(
       lambda x: np.where(x)[0][0], axis=-1, arr=cases >= target_cases)
-  shifts = split_time - hit_times
+  shifts_all = split_time - hit_times
+
+  # We don't want to shift any infection curves so they start before time 0
+  shifts = np.where(shifts_all > 0, shifts_all, 0)
 
   # TODO(edklein) make this its own function
   shift_dataarray = xr.DataArray(shifts, dims=['samples', 'location'])
