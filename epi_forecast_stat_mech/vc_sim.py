@@ -132,7 +132,8 @@ def generate_simulations(final_size_fn,
                          num_time_steps=500,
                          constant_r=1.0,
                          constant_p=0.6,
-                         fraction_infected_limits=(0.05, 1.0)):
+                         fraction_infected_limits=(0.05, 1.0),
+                         shift_timeseries=True):
   """Generate many samples of VC curves.
 
   Generate many VC curves. Each sample contains num_locations.
@@ -153,6 +154,9 @@ def generate_simulations(final_size_fn,
       rate is sub or super exponential (default 0.6)
     fraction_infected_limits: A pair of floats in [0, 1] representing the limits
       on the fraction of the population that will be infected at SPLIT_TIME.
+    shift_timeseries: A bool indicating whether we should shift the trajectories
+      based on fraction_infected_limits. If False, all trajectories will start
+      with 1 infection at time t=0.
 
   Returns:
     trajectories: a xr.Dataset of the simulated infections over time
@@ -188,5 +192,8 @@ def generate_simulations(final_size_fn,
       trajectories.growth_rate_exp, trajectories.sizes['sample'],
       trajectories.sizes['time'])
 
-  return data_model.shift_timeseries(trajectories, fraction_infected_limits,
-                                    SPLIT_TIME)
+  if not shift_timeseries:
+    return trajectories
+  else:
+    return data_model.shift_timeseries(trajectories, fraction_infected_limits,
+                                       SPLIT_TIME)

@@ -602,7 +602,8 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
                                            population_size=10000,
                                            social_distancing_threshold=10000/4,
                                            fraction_infected_limits=(.05, 1.),
-                                           prob_infection_constant=0.2):
+                                           prob_infection_constant=0.2,
+                                           shift_timeseries=True):
   """Generate many samples of SIR curves with social distancing.
 
   Generate many SIR curves with social distancing implemented when the number of
@@ -634,6 +635,9 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
       the probability of becoming infected by. We noticed that a value of 1. led
       to curves that were short in time and clustered in time. By changing this
       to less than 1., our models fit better.
+    shift_timeseries: A bool indicating whether we should shift the trajectories
+      based on fraction_infected_limits. If False, all trajectories will start
+      with 1 infection at time t=0.
 
   Returns:
     trajectories: a xr.Dataset of the simulated infections over time
@@ -646,7 +650,7 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
                                        num_time_steps,
                                        constant_gamma,
                                        population_size,
-                                       gen_dynamic_beta_fn=None);
+                                       gen_dynamic_beta_fn=None)
 
   beta, dynamic_covariates, dynamic_weights, new_infections = generate_social_distancing_ground_truth(
       trajectories.population_size, trajectories.growth_rate,
@@ -659,4 +663,8 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
   trajectories['dynamic_weights'] = dynamic_weights
   trajectories['new_infections'] = new_infections
 
-  return   data_model.shift_timeseries(trajectories, fraction_infected_limits, SPLIT_TIME)
+  if not shift_timeseries:
+    return trajectories
+  else:
+    return data_model.shift_timeseries(trajectories, fraction_infected_limits,
+                                       SPLIT_TIME)
