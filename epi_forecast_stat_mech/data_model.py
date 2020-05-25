@@ -344,4 +344,9 @@ def convert_data_to_integer_time(trajectories, use_numpy_index_time=False):
   trajectories = trajectories.copy()
   trajectories['original_time'] = time
   trajectories['time'] = integer_time
+  if hasattr(trajectories, 'canonical_split_time'):
+    orig_split_time = trajectories['canonical_split_time']
+    trajectories['original_canonical_split_time'] = orig_split_time
+    idx = np.searchsorted(trajectories['original_time'], orig_split_time)
+    trajectories['canonical_split_time'] = trajectories['time'][idx]
   return trajectories
