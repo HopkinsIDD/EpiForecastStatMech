@@ -137,7 +137,8 @@ class RtLiveEstimator(estimator_base.Estimator):
     return xr.DataArray(
         ks[1:],
         coords=(dates[1:], self.latest_k.index, range(num_samples)),
-        dims=('time', self.latest_k.index.name, 'sample'))
+        dims=('time', self.latest_k.index.name,
+              'sample')).rename('new_infections')
 
 
 def get_estimator_dict():
