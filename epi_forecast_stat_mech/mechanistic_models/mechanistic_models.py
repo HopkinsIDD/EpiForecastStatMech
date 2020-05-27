@@ -167,6 +167,11 @@ class MechanisticModel:
     """
     ...
 
+  @abc.abstractmethod
+  def init_parameters(self):
+    """Returns reasonable `parameters` for an initial guess."""
+    ...
+
   @property
   @abc.abstractmethod
   def encoded_param_names(self):
@@ -348,10 +353,9 @@ class StepBasedViboudChowellModel(IntensityModel):
                     0.,
                     initial_record.cumulative_infections)
 
-  @staticmethod
-  def init_parameters():
+  def init_parameters(self):
     """Returns reasonable `parameters` for an initial guess."""
-    return jnp.log(jnp.asarray([2., .9, .9, 200000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, 200000.]))
 
   def epidemic_observables(self, parameters, epidemics):
     """See base class."""
@@ -408,10 +412,12 @@ class StepBasedGaussianModel(IntensityModel):
     m, log_s, log_k = jnp.split(parameters, 3, axis=-1)
     return m, jnp.exp(log_s), jnp.exp(log_k)
 
-  @staticmethod
-  def init_parameters():
+  def encode_params(self, parameters):
+    return jnp.concatenate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
+
+  def init_parameters(self):
     """Returns reasonable `parameters` for an initial guess."""
-    return jnp.asarray([100., np.log(100.), np.log(1000.)])
+    return self.encode_params(jnp.asarray([100., 100., 1000.]))
 
 
 class StepBasedMultiplicativeGrowthModel(IntensityModel):
@@ -447,10 +453,9 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
     tuple_form = (base, beta, K) = jnp.exp(parameters)
     return tuple_form
 
-  @staticmethod
-  def init_parameters():
+  def init_parameters(self):
     """Returns reasonable `parameters` for an initial guess."""
-    return jnp.log(jnp.asarray([0.5, 0.75, 10000.]))
+    return self.encode_params(jnp.asarray([0.5, 0.75, 10000.]))
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
@@ -548,10 +553,9 @@ class ViboudChowellModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((.1, .1, .1, .1))
 
-  @staticmethod
-  def init_parameters():
+  def init_parameters(self):
     """Returns reasonable `parameters` for an initial guess."""
-    return jnp.log(jnp.asarray([2., .9, .9, 250000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, 250000.]))
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
@@ -651,10 +655,9 @@ class GaussianModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((3., .1, .1))
 
-  @staticmethod
-  def init_parameters():
+  def init_parameters(self):
     """Returns reasonable `parameters` for an initial guess."""
-    return jnp.asarray([100., np.log(100.), np.log(1000.)])
+    return self.encode_params(jnp.asarray([100., 100., 1000.]))
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
