@@ -8,6 +8,8 @@ import pandas as pd
 import scipy.stats as sps
 import xarray as xr
 
+MAX_LAMBDA = 1e9
+
 
 class RtLiveEstimator(estimator_base.Estimator):
   """A rolled out version of the rt.live model, following github implementation.
@@ -118,6 +120,7 @@ class RtLiveEstimator(estimator_base.Estimator):
     for _ in range(time_steps):
       # Sample number of new cases today.
       lam = ks[-1] * np.exp(self.GAMMA * (rts - 1))
+      lam = np.minimum(lam, MAX_LAMBDA)
       ks.append(sps.poisson.rvs(lam))
 
       # Update Rt based on process noise.
