@@ -85,6 +85,9 @@ class RtLiveEstimator(estimator_base.Estimator):
     # The github version stores the posterior for each day, but we only care
     # about the final posterior for forecasting purposes.
     posterior = self.prior[:, np.newaxis]
+    # Explicitly broadcast to ensure posterior has the right shape even if sr is
+    # a single day (so the body of the for loop is skipped).
+    posterior = np.broadcast_to(posterior, posterior.shape[:-1] + sr.shape[-1:])
     for current_day in sr.index[1:]:
       # Update for process noise.
       posterior = self.process_matrix.values @ posterior
