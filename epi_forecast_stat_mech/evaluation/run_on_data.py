@@ -40,7 +40,7 @@ def train_test_split_time(data, split_day):
 
 def shard_locations_randomly(data, num_shards=5, seed=0):
   """Split data into roughly equally sized shards by location."""
-  locations = data.location.values
+  locations = data.location.values.copy()
   np.random.seed(seed)
   np.random.shuffle(locations)
   breakpoints = np.linspace(0, len(locations), num_shards, endpoint=False)
