@@ -271,25 +271,23 @@ def lbfgs_optim(f, x0, max_iter=10000):
       options={'maxiter': max_iter})
 
 
+def make_mean_estimators():
+  return sklearn.dummy.DummyRegressor(strategy='mean')
+
+
 def get_estimator_dict():
   estimator_dict = {}
   estimator_dict['iterative_randomforest__VC'] = IterativeEstimator()
-  mean_estimators = collections.defaultdict(
-      lambda: sklearn.dummy.DummyRegressor(strategy='mean'))
   estimator_dict['iterative_mean__VC'] = IterativeEstimator(
-      stat_estimators=mean_estimators)
+      stat_estimators=make_mean_estimators())
   estimator_dict['iterative_randomforest__VC_PL'] = IterativeEstimator(
       mech_model=mechanistic_models.ViboudChowellModelPseudoLikelihood())
-  mean_estimators = collections.defaultdict(
-      lambda: sklearn.dummy.DummyRegressor(strategy='mean'))
   estimator_dict['iterative_mean__VC_PL'] = IterativeEstimator(
-      stat_estimators=mean_estimators,
+      stat_estimators=make_mean_estimators(),
       mech_model=mechanistic_models.ViboudChowellModelPseudoLikelihood())
   estimator_dict['iterative_randomforest__Gaussian_PL'] = IterativeEstimator(
       mech_model=mechanistic_models.GaussianModelPseudoLikelihood())
-  mean_estimators = collections.defaultdict(
-      lambda: sklearn.dummy.DummyRegressor(strategy='mean'))
   estimator_dict['iterative_mean__Gaussian_PL'] = IterativeEstimator(
-      stat_estimators=mean_estimators,
+      stat_estimators=make_mean_estimators(),
       mech_model=mechanistic_models.GaussianModelPseudoLikelihood())
   return estimator_dict
