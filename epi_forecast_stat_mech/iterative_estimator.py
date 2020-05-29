@@ -272,7 +272,8 @@ def lbfgs_optim(f, x0, max_iter=10000):
 
 
 def make_mean_estimators():
-  return sklearn.dummy.DummyRegressor(strategy='mean')
+  return collections.defaultdict(
+      lambda: sklearn.dummy.DummyRegressor(strategy='mean'))
 
 
 def get_estimator_dict():

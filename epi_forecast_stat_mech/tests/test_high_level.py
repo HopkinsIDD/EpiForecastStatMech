@@ -77,16 +77,14 @@ class TestHighLevelRtLive(absltest.TestCase):
 class TestHighLevelIterativeEstimator(absltest.TestCase):
   """Tests for Iterative high_level module."""
 
-  def test_IterativeEstimator(self):
-    """Verify we can fit and predict from IterativeEstimator."""
+  def test_IterativeMeanEstimator(self):
+    """Verify we can fit and predict from IterativeMeanEstimator."""
     prediction_length = 10
     num_samples = 11
 
     data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
-    mean_estimators = collections.defaultdict(
-        lambda: sklearn.dummy.DummyRegressor(strategy='mean'))
-    estimator = high_level.IterativeEstimator(
-        stat_estimators=mean_estimators).fit(data)
+    estimator = high_level.get_estimator_dict()['iterative_mean__VC']
+    estimator.fit(data)
 
     _ = estimator.mech_params.to_netcdf()
     _ = estimator.mech_params_hat.to_netcdf()
