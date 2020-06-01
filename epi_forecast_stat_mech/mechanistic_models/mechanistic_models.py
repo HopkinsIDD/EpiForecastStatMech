@@ -75,7 +75,7 @@ class FastPoisson:
     # issue in which nan's propogate through vjp in unexpected ways.
     # c.f. https://github.com/google/jax/issues/1052
     return tfd.Poisson(self.rate).log_prob(
-        jnp.where((x >= 0) & ~jnp.isnan(x), x, -1.), **kwargs)
+        jnp.where(x >= 0, x, -1.), **kwargs)
 
 
 def OverDispersedPoisson(mean, overdispersion):

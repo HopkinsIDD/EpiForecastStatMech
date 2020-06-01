@@ -46,9 +46,8 @@ def pseudo_poisson_log_probs(intensity, observations, axis=0):
   Returns:
     log_probs: An entry for each entry of observations.
   """
-  mask = (observations >= 0) & (~jnp.isnan(observations))
-  observations = jnp.where(mask,
-                           observations, 0.)
+  mask = observations >= 0
+  observations = jnp.where(mask, observations, 0.)
   root_observations = jnp.sqrt(observations + .375)
   root_intensity = jnp.sqrt(intensity + .375)
   plugin_error_model = gaussian_with_softplus_scale_estimate(
