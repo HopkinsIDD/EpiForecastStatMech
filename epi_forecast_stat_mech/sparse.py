@@ -317,7 +317,10 @@ def make_demo_intensity_list(intensity_family, trajectories):
   assert np.issubdtype(trajectories.time.dtype,
                        np.integer), 'Integer time required.'
   accum = []
-  for location, nominal_trajectory in trajectories.groupby('location'):
+  # squeeze=False is required because groubpy sometimes keeps location as a
+  # coordinate and sometimes does not (I'm not sure why). When it does not keep
+  # location as a coordinate, where() crashes (also not sure why).
+  for location, nominal_trajectory in trajectories.groupby('location', squeeze=False):
     trajectory = nominal_trajectory.where(~nominal_trajectory.new_infections.isnull(), drop=True).copy()
     accum.append(
         DemoIntensityFamily(intensity_family).set_trajectory(
