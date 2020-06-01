@@ -6,6 +6,7 @@ import pickle
 
 import jax
 from jax import flatten_util
+from jax.experimental import optimizers
 import jax.numpy as jnp
 from matplotlib import pyplot as plt
 import numpy as np
@@ -36,8 +37,8 @@ def load(file_in):
 def _get_time_mask(data, min_value=1):
   """Masks times while total number of infections is less than `min_value`."""
   new_infections = data.new_infections.transpose('location', 'time')
-  total = np.cumsum(new_infections.values, -1)
-  mask = np.asarray(total >= min_value & ~new_infections.isnull()).astype(
+  total = new_infections.cumsum('time', skipna=True)
+  mask = np.asarray((total >= min_value) & (~new_infections.isnull())).astype(
       np.float32)
   return mask
 
@@ -51,7 +52,10 @@ class IterativeEstimator(estimator_base.Estimator):
                stat_estimators=None,
                mech_model=None,
                hat_interpolation_alpha=0.5,
-               iter_max=100):
+               iter_max=100,
+               gradient_steps=10000,
+               learning_rate=1E-4,
+               verbose=1):
     """Construct an IterativeEstimator.
 
     Args:
@@ -65,6 +69,12 @@ class IterativeEstimator(estimator_base.Estimator):
       hat_interpolation_alpha: float between 0. and 1. representing how much
         to move toward the newly estimated mech_params_hat in each loop.
       iter_max: positive integer. How many iterative loops to perform.
+      gradient_steps: The number of adam steps to perform per iter.
+      learning_rate: The learning rate (positive float; default 1E-4).
+      verbose: (Integer >= 0, default 1) Verbosity:
+        0: Quiet.
+        1: Reports every 1k steps.
+        2: Also report initial value and gradient.
     """
     if stat_estimators is None:
       stat_estimators = collections.defaultdict(
@@ -72,6 +82,9 @@ class IterativeEstimator(estimator_base.Estimator):
     self.stat_estimators = stat_estimators
     self.hat_interpolation_alpha = hat_interpolation_alpha
     self.iter_max = iter_max
+    self.gradient_steps = gradient_steps
+    self.learning_rate = learning_rate
+    self.verbose = verbose
     if mech_model is None:
       mech_model = mechanistic_models.ViboudChowellModel()
     self.mech_model = mech_model
@@ -123,6 +136,14 @@ class IterativeEstimator(estimator_base.Estimator):
     for _ in range(self.iter_max):
       # Update mech_params_stack "regularized" by current mech_params_hat_stack.
       # N.B. This is not a maximum likelihood update.
+      # We run two optimizers consecutively to try to unstick each.
+      adam_loop = get_adam_optim_loop(
+          functools.partial(
+              mech_plus_stat_loss_val_and_grad,
+              mech_params_hat_stack=mech_params_hat_stack),
+          learning_rate=self.learning_rate)
+      mech_params_stack = adam_loop(
+          mech_params_stack, train_steps=self.gradient_steps, verbose=self.verbose)
       mech_params_stack, opt_status, _ = lbfgs_optim(
           functools.partial(
               mech_plus_stat_loss_val_and_grad,
@@ -269,6 +290,47 @@ def lbfgs_optim(f, x0, max_iter=10000):
       jac=True,
       method='L-BFGS-B',  # sometimes line-search failure.
       options={'maxiter': max_iter})
+
+
+def get_adam_optim_loop(f, learning_rate=1E-3):
+  opt_init, opt_update, get_params = optimizers.adam(
+      learning_rate, eps=1E-6)
+
+  @jax.jit
+  def train_step(step, opt_state):
+    params = get_params(opt_state)
+    loss_value, grad = f(params)
+    opt_state = opt_update(step, grad, opt_state)
+    return opt_state, loss_value
+
+  # For some of these models (especially on accelerators), a single training
+  # step runs very quickly. Fusing steps together considerably improves
+  # performance.
+  @functools.partial(jax.jit, static_argnums=(1,))
+  def repeated_train_step(step, repeats, opt_state):
+    def f(carray, _):
+      step, opt_state, _ = carray
+      opt_state, loss_value = train_step(step, opt_state)
+      return (step + 1, opt_state, loss_value), None
+    (_, opt_state, loss_value), _ = jax.lax.scan(
+        f, (step, opt_state, 0.0), xs=None, length=repeats)
+    return opt_state, loss_value
+
+  def train_loop(x0, train_steps=10000, fused_train_steps=100, verbose=1):
+    if verbose >= 2:
+      print(f'x0: {x0}')
+      print(f'f(x0): {f(x0)}')
+    opt_state = opt_init(x0)
+    for step in range(0, train_steps, fused_train_steps):
+      opt_state, loss_value = repeated_train_step(
+          step, fused_train_steps, opt_state)
+      if step % 1000 == 0:
+        if verbose >= 1:
+          print(f'Loss at step {step} is: {loss_value}.')
+
+    x = get_params(opt_state)
+    return x
+  return train_loop
 
 
 def make_mean_estimators():

@@ -46,6 +46,9 @@ def pseudo_poisson_log_probs(intensity, observations, axis=0):
   Returns:
     log_probs: An entry for each entry of observations.
   """
+  mask = (observations >= 0) & (~jnp.isnan(observations))
+  observations = jnp.where(mask,
+                           observations, 0.)
   root_observations = jnp.sqrt(observations + .375)
   root_intensity = jnp.sqrt(intensity + .375)
   plugin_error_model = gaussian_with_softplus_scale_estimate(
@@ -55,7 +58,7 @@ def pseudo_poisson_log_probs(intensity, observations, axis=0):
       mean=root_intensity,
       softness=0.5)
   log_probs = plugin_error_model.log_prob(root_observations)
-  return log_probs
+  return jnp.where(mask, log_probs, 0.)
 
 
 # Normalizing factor so that `soft_laplace_log_prob` is a proper distribution.

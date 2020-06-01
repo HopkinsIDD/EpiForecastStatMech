@@ -32,10 +32,12 @@ LogLikelihoods = collections.namedtuple(
      "stat_log_likelihood"])
 
 
-def _get_time_mask(ds, min_value=30):
+def _get_time_mask(data, min_value=1):
   """Masks times while total number of infections is less than `min_value`."""
-  total = ds.total.values
-  mask = np.asarray(total > min_value).astype(np.float32)
+  new_infections = data.new_infections.transpose("location", "time")
+  total = new_infections.cumsum("time", skipna=True)
+  mask = np.asarray((total >= min_value) & (~new_infections.isnull())).astype(
+      np.float32)
   return mask
 
 
@@ -49,6 +51,7 @@ class StatMechEstimator(estimator_base.Estimator):
   mech_model: mechanistic_models.MechanisticModel = dataclasses.field(
       default_factory=mechanistic_models.ViboudChowellModel)
   fused_train_steps: int = 100
+  # TODO(mcoram): Resolve whether the "30" is deprecated hack or still useful.
   time_mask_value: int = 30
   fit_seed: int = 42
 
@@ -131,7 +134,7 @@ class StatMechEstimator(estimator_base.Estimator):
       log_likelihoods = self._log_likelihoods(
           params, epidemics, covariates, self.mech_model, self.stat_model)
       mech_log_likelihood = log_likelihoods.mech_log_likelihood
-      mech_log_likelihood *= self.time_mask
+      mech_log_likelihood = jnp.where(self.time_mask, mech_log_likelihood, 0.)
       log_likelihoods = log_likelihoods._replace(
           mech_log_likelihood=mech_log_likelihood)
       return -1. * sum(jax.tree_leaves(jax.tree_map(jnp.sum, log_likelihoods)))
@@ -245,6 +248,8 @@ def get_estimator_dict(
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL"),
     list_of_stat_names=("Linear", "MLP")):
 
+  # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
+  # hack or still useful.
   # Create an iterator
   components_iterator = itertools.product(
       itertools.product(list_of_prior_fns, list_of_mech_models),

@@ -70,8 +70,12 @@ class FastPoisson:
     normal_ints = jnp.maximum(normal_floats.round().astype(jnp.int32), 0)
     return jnp.where(use_poisson, poisson_samples, normal_ints)
 
-  def log_prob(self, *args, **kwargs):
-    return tfd.Poisson(self.rate).log_prob(*args, **kwargs)
+  def log_prob(self, x, **kwargs):
+    # The use of where in the following is a workaround for the "double-where"
+    # issue in which nan's propogate through vjp in unexpected ways.
+    # c.f. https://github.com/google/jax/issues/1052
+    return tfd.Poisson(self.rate).log_prob(
+        jnp.where((x >= 0) & ~jnp.isnan(x), x, -1.), **kwargs)
 
 
 def OverDispersedPoisson(mean, overdispersion):
@@ -86,6 +90,7 @@ def OverDispersedPoisson(mean, overdispersion):
   Returns:
     tfp.Distribution
   """
+  # TODO(mcoram): Address the double-where here too.
   return tfd.NegativeBinomial(
       total_count=mean / (overdispersion - 1),
       probs=(1. - 1. / overdispersion),
