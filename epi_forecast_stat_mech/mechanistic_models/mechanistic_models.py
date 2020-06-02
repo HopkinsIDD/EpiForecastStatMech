@@ -3,7 +3,7 @@
 
 import abc
 import collections
-from typing import Callable, Union
+from typing import Callable, Union, Mapping, Text
 import dataclasses
 
 from epi_forecast_stat_mech import utils
@@ -17,6 +17,8 @@ tfp = tfp.experimental.substrates.jax
 tfd = tfp.distributions
 
 from epi_forecast_stat_mech.statistical_models import probability as stat_prob
+from flax import nn
+import flax.nn.initializers
 
 Array = Union[float, jnp.DeviceArray, np.ndarray]
 
@@ -245,10 +247,10 @@ class IntensityModel(MechanisticModel):
       return new_state, jnp.squeeze(log_prob)
 
     time_series_length = epidemic_record.t.shape[0]
-    time_dependent_params_shape = jax.tree_map(
-        lambda x: (time_series_length,) + x.shape, self.init_parameters())
-    time_dependent_params = jax.tree_multimap(
-        jnp.broadcast_to, parameters, time_dependent_params_shape)
+    time_dependent_params_shape = (time_series_length,
+                                   len(self.step_based_encoded_param_names))
+    time_dependent_params = jax.tree_multimap(jnp.broadcast_to, parameters,
+                                              time_dependent_params_shape)
     start_params, params = utils.split_along_axis(time_dependent_params, 0, 1)
     start_record, record = utils.split_along_axis(epidemic_record, 0, 1)
     start_state = self._initial_state(start_params, start_record)
@@ -294,10 +296,10 @@ class IntensityModel(MechanisticModel):
 
     observed_record_length = observed_epidemic_record.t.shape[0]
     time_series_length = observed_record_length + length
-    time_dependent_params_shape = jax.tree_map(
-        lambda x: (time_series_length,) + x.shape, self.init_parameters())
-    time_dependent_params = jax.tree_multimap(
-        jnp.broadcast_to, parameters, time_dependent_params_shape)
+    time_dependent_params_shape = (time_series_length,
+                                   len(self.step_based_encoded_param_names))
+    time_dependent_params = jax.tree_multimap(jnp.broadcast_to, parameters,
+                                              time_dependent_params_shape)
     start_params, params = utils.split_along_axis(time_dependent_params, 0, 1)
     start_record, record = utils.split_along_axis(
         observed_epidemic_record, 0, 1)
@@ -322,14 +324,14 @@ class StepBasedViboudChowellModel(IntensityModel):
   """ViboudChowell mechanistic model."""
 
   @property
-  def param_names(self):
+  def step_based_param_names(self):
     return ("r", "a", "p", "K")
 
   def encode_params(self, parameters):
     return jnp.log(parameters)
 
   @property
-  def encoded_param_names(self):
+  def step_based_encoded_param_names(self):
     return ("log_r", "log_a", "log_p", "log_K")
 
   @property
@@ -354,9 +356,9 @@ class StepBasedViboudChowellModel(IntensityModel):
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
     del parameters  # unused
-    return jnp.where(jnp.isnan(initial_record.cumulative_infections),
-                    0.,
-                    initial_record.cumulative_infections)
+    return jnp.where(
+        jnp.isnan(initial_record.cumulative_infections), 0.,
+        initial_record.cumulative_infections)
 
   def init_parameters(self):
     """Returns reasonable `parameters` for an initial guess."""
@@ -424,6 +426,14 @@ class StepBasedGaussianModel(IntensityModel):
     """Returns reasonable `parameters` for an initial guess."""
     return self.encode_params(jnp.asarray([100., 100., 1000.]))
 
+  @property
+  def step_based_param_names(self):
+    return ("m", "s", "K")
+
+  @property
+  def step_based_encoded_param_names(self):
+    return ("m", "log_s", "log_K")
+
 
 class StepBasedMultiplicativeGrowthModel(IntensityModel):
   """MultiplicativeGrowth mechanistic model."""
@@ -431,14 +441,14 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
   new_infection_distribution: Callable = OverDispersedPoisson
 
   @property
-  def param_names(self):
+  def step_based_param_names(self):
     return ("base", "beta", "K")
 
   def encode_params(self, parameters):
     return jnp.log(parameters)
 
   @property
-  def encoded_param_names(self):
+  def step_based_encoded_param_names(self):
     return ("log_base", "log_beta", "log_K")
 
   @property
@@ -500,7 +510,6 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
   def epidemic_observables(self, parameters, epidemics):
     """See base class."""
     return {"epidemic_size": parameters[..., -1:]}
-
 
 
 # TODO(jamieas): unify VC and Gaussian models as subclasses of `IntensityModel`.
@@ -739,3 +748,164 @@ class GaussianModelPseudoLikelihood(GaussianModel):
     observations = epidemics.infections_over_time
     log_probs = stat_prob.pseudo_poisson_log_probs(intensity, observations)
     return log_probs
+
+
+def constant_initializer(value):
+
+  def init(key, shape, dtype=jnp.float32):
+    return jnp.asarray(value).reshape(shape).astype(dtype)
+
+  return init
+
+
+class ConstantModule(nn.Module):
+
+  def apply(self, x, init):
+    bias = self.param("bias", init.shape, constant_initializer(init))
+    return jnp.broadcast_to(bias, x.shape[:-1] + bias.shape)
+
+
+def params_dict_path_to_leaves(params, dynamic_covariate, path=()):
+  """Replace a params "tree"'s leaves with named leaves."""
+  out = {}
+  if set(["bias", "kernel"]).issuperset(set(params.keys())):
+    bias = params.get("bias", None)
+    kernel = params.get("kernel", None)
+    if bias is not None:
+      out["bias"] = np.asarray([
+          "__".join(path),
+      ])
+    if kernel is not None:
+      out["kernel"] = np.asarray([
+          "__".join(path + (f"from_{key}",)) for key in dynamic_covariate.data
+      ])
+    return out
+  for key, val in params.items():
+    out[key] = params_dict_path_to_leaves(val, dynamic_covariate, path + (key,))
+  return out
+
+
+def params_dict_kernel_indicator(params):
+  """Replace a params "tree"'s leaves with indicator of kernel."""
+  out = {}
+  if set(["bias", "kernel"]).issuperset(set(params.keys())):
+    bias = params.get("bias", None)
+    kernel = params.get("kernel", None)
+    if bias is not None:
+      out["bias"] = jnp.zeros_like(bias)
+    if kernel is not None:
+      out["kernel"] = jnp.ones_like(kernel)
+    return out
+  for key, val in params.items():
+    out[key] = params_dict_kernel_indicator(val)
+  return out
+
+
+class DynamicIntensityModel(IntensityModel):
+  """Wrap an IntensityModel with a DynamicModule."""
+
+  def __init__(self, rng, dynamic_covariate):
+    self.dynamic_covariate = dynamic_covariate
+    DynamicModule = self.DynamicModule
+    _, init_params = DynamicModule.init_by_shape(
+        rng, [((len(dynamic_covariate),), jnp.float32)])
+    self.init_params = init_params
+    init_flat, unravel = jax.flatten_util.ravel_pytree(init_params)
+    self.unravel = unravel
+    self.init_flat = init_flat
+    kernel_indicator = params_dict_kernel_indicator(init_params)
+    flat_kernel_indicator, _ = jax.flatten_util.ravel_pytree(kernel_indicator)
+    self.flat_kernel_indicator = flat_kernel_indicator
+    super().__init__()
+
+  @property
+  def encoded_param_names(self):
+    return tuple(
+        np.concatenate(
+            jax.tree_flatten(
+                params_dict_path_to_leaves(
+                    self.init_params, self.dynamic_covariate))[0]))
+
+  @property
+  def param_names(self):
+    return self.encoded_param_names
+
+  def encode_params(self, flat_params):
+    return flat_params
+
+  def split_and_scale_parameters(self, flat_params):
+    return jnp.split(flat_params, len(flat_params))
+
+  def decode_params(self, flat_params):
+    return flat_params
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray(
+        [self.bottom_scale_dict[key] for key in self.encoded_param_names])
+
+  def init_parameters(self):
+    return self.init_flat
+
+  def log_likelihood(self, flat_parameters, epidemic_record):
+    parameters = self.unravel(flat_parameters)
+    time_dep_params = self.DynamicModule.call(
+        parameters, epidemic_record.dynamic_covariates)
+    return super().log_likelihood(time_dep_params, epidemic_record)
+
+  def predict(
+      self,
+      flat_parameters,
+      rng,
+      observed_epidemic_record,
+      dynamic_covariates,
+      include_observed=True
+  ):
+    """Samples a trajectory continuing `observed_epidemic` by length `length`.
+
+    Args:
+      flat_parameters: parameters of the mechanistic model.
+      rng: PRNG to use for sampling.
+      observed_epidemic_record: initial epidemics trajectory to continue.
+      dynamic_covariates: np array of time x dynamic_covariate.
+      include_observed: whether to prepend the observed epidemics.
+
+    Returns:
+      trajectory of predicted infections of length `length` or
+      `len(observed_epidemic_record) + length` if `include_observed` is True.
+    """
+    parameters = self.unravel(flat_parameters)
+    time_dep_params = self.DynamicModule.call(
+        parameters, dynamic_covariates)
+    length = dynamic_covariates.shape[0] - len(observed_epidemic_record.t)
+    assert length >= 0
+    return super().predict(time_dep_params, rng, observed_epidemic_record,
+                           length, include_observed)
+
+
+class DynamicMultiplicativeGrowthModel(DynamicIntensityModel,
+                                       StepBasedMultiplicativeGrowthModel):
+  """MultiplicativeGrowth mechanistic model with dynamic variable utilization."""
+
+  def __init__(self, rng, dynamic_covariate):
+    self.bottom_scale_dict = collections.defaultdict(lambda: 0.1)
+    super().__init__(rng, dynamic_covariate)
+
+  class DynamicModule(nn.Module):
+
+    def apply(self, x):
+      log_base_module = ConstantModule.partial(
+          name="log_base",
+          init=jnp.reshape(jnp.log(0.5), (1,)))
+      log_beta_module = nn.Dense.partial(
+          name="log_beta",
+          features=1,
+          kernel_init=flax.nn.initializers.zeros,
+          bias_init=constant_initializer(jnp.log(0.75)))
+      log_K_module = ConstantModule.partial(
+          name="log_K",
+          init=jnp.reshape(jnp.log(10000.), (1,)))
+      log_base = log_base_module(x)
+      log_beta = log_beta_module(x)
+      log_K = log_K_module(x)
+      return jnp.concatenate((log_base, log_beta, log_K), axis=-1)
