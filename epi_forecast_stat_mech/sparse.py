@@ -13,6 +13,8 @@ from .tf_common import *
 from .flatten_util import ravel_pytree
 from . import soft_laplace
 
+from epi_forecast_stat_mech import data_model
+
 
 # Process mcmc output helpers
 
@@ -208,6 +210,8 @@ class DemoIntensityFamily(object):
     trajectories0 = self.trajectories0
     if can_extrapolate:
       trajectories0_hat = DummyData()
+      if len(trajectories0.time) == 0:
+        return
       trajectories0_hat.time = np.arange(round(np.max(tf_float(trajectories0.time)) * 1.5) + 5)
     else:
       trajectories0_hat = trajectories0
@@ -233,8 +237,12 @@ class DemoIntensityFamily(object):
     @tf.function
     def mech_logprob(params):
       wrapped_params = self.intensity_family.params_wrapper().reset(params)
-      return get_mech_logprob(self.trajectories0,
+      lp =  get_mech_logprob(self.trajectories0,
                               self.intensity_family.intensity, wrapped_params)
+      # This is useful for debugging sometimes, but can raise unwanted errors
+      # during line-search, so we leave it off normally.
+      # tf.debugging.assert_all_finite(lp, 'nan in mech_logprob: %s' % (self.trajectories0))
+      return lp
 
     return mech_logprob
 
@@ -301,45 +309,49 @@ class DemoIntensityFamily(object):
 
 """## Fit utilities."""
 
-def make_demo_intensity_list(intensity_family, trajectories, align_time_to_first=True):
+def make_demo_intensity_list(intensity_family, trajectories):
+  if not np.issubdtype(trajectories.time.dtype, np.integer):
+    # TODO(mcoram): Resolve integer time issues upstream.
+    trajectories = data_model.convert_data_to_integer_time(
+      trajectories, use_numpy_index_time=True)
+  assert np.issubdtype(trajectories.time.dtype,
+                       np.integer), 'Integer time required.'
   accum = []
-  for location, nominal_trajectory in trajectories.groupby('location'):
+  # squeeze=False is required because groubpy sometimes keeps location as a
+  # coordinate and sometimes does not (I'm not sure why). When it does not keep
+  # location as a coordinate, where() crashes (also not sure why).
+  for location, nominal_trajectory in trajectories.groupby('location', squeeze=False):
     trajectory = nominal_trajectory.where(~nominal_trajectory.new_infections.isnull(), drop=True).copy()
-    if align_time_to_first:
-      try:
-        first_case_ix = np.where(trajectory.new_infections > 0)[0][0]
-      except IndexError:
-        first_case_ix =len(trajectory.new_infections)
-      integer_day = trajectory.time.values
-      if first_case_ix < len(trajectory.new_infections):
-        integer_day = integer_day - integer_day[first_case_ix]
-      else:
-        integer_day = integer_day - integer_day[first_case_ix - 1]
-      trajectory['time'] = xarray.DataArray(integer_day, dims=('time',), coords=(integer_day,))
-      trajectory = trajectory.isel(time=slice(first_case_ix, len(trajectory.new_infections)), drop=True)
     accum.append(
         DemoIntensityFamily(intensity_family).set_trajectory(
             trajectory))
   return accum
 
 
-def find_common_fit(intensity_family, trajectories):
+def find_common_fit(intensity_family, trajectories, use_nelder_mead=False):
   di_list = make_demo_intensity_list(intensity_family, trajectories)
   mech_logprobs = [di.get_mech_logprob() for di in di_list]
   neg_sum_mech_logprobs = lambda params: -tf.reduce_sum(
       tf.stack([lp(params) for lp in mech_logprobs]))
 
-  opt1 = wrap_minimize(
-      neg_sum_mech_logprobs,
-      intensity_family.params0._x,
-      method='nelder-mead',
-      options={'maxiter': 10000})
-
-  common_fit_params = intensity_family.params_wrapper().reset(opt1.x)
-  print(opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  unravel = lambda x: intensity_family.params_wrapper().reset(x)
+  if use_nelder_mead:
+    opt1 = wrap_minimize(
+        neg_sum_mech_logprobs,
+        intensity_family.params0._x,
+        method='nelder-mead',
+        options={'maxiter': 10000})
+    common_fit_params = unravel(opt1.x)
+    opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  else:
+    val_and_grad_common_mech_loss = make_value_and_grad(neg_sum_mech_logprobs)
+    common_fit_params, opt_status, opt1 = _lbfgs_optim(
+      val_and_grad_common_mech_loss, intensity_family.params0._x, unravel)
+  print(*opt_status)
   print(common_fit_params)
-  # for di in di_list:
-  #   di.set_fitted_params(common_fit_params).do_plot()
+  if np.isnan(opt_status[1]):
+    raise RuntimeError('nan encountered in optimization.')
+
   return common_fit_params, di_list
 
 
@@ -388,15 +400,86 @@ class BICRunSummary(
   """
 
 
+def get_model_dims(intensity_family, trajectories):
+  v_df = _get_static_covariate_df(trajectories)
+  out_dim = len(intensity_family.encoded_param_names)
+  in_dim = v_df.shape[1]
+  n_trajectories = v_df.shape[0]
+  return n_trajectories, in_dim, out_dim
+
+
+def _lbfgs_optim(f, x0, unravel_func, max_iter=10000):
+  opt1 = wrap_minimize(
+      f,
+      x0,
+      jac=True,
+      method='L-BFGS-B', # sometimes line-search failure.
+      options={'maxiter': max_iter})
+  opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  x = unravel_func(tf_float(opt1.x))
+  return x, opt_status, opt1
+
+
+def _powell_optim(f, x0, unravel_func, max_iter=10000):
+  opt1 = wrap_minimize(
+      f,
+      x0,
+      jac=True,
+      method='powell', # slow.
+      options={'maxiter': max_iter})
+  opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
+  x = unravel_func(tf_float(opt1.x))
+  return x, opt_status, opt1
+
+
+def _tfp_lbfgs_optim(f, x0, unravel_func, max_iter=10000):
+  opt1 = tfp.optimizer.lbfgs_minimize(
+        f,
+        x0,
+        max_iterations=max_iter)
+  opt_status = (not bool(opt1.converged.numpy()), float(opt1.objective_value), opt1.num_objective_evaluations, '')
+  x = unravel_func(tf_float(opt1.position))
+  return x, opt_status, opt1
+
+
+def _adam_optim(f, x0, unravel_func, learning_rate=1E-2, max_iter=10000, verbose=1):
+  opt = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+  x = tf.Variable(x0)
+  for i in range(max_iter):
+    loss, grad = f(x)
+    opt.apply_gradients([(grad, x)])
+    if verbose and i % 500 == 0:
+      print(i, float(loss), float(tf.math.sqrt(tf.reduce_sum(grad ** 2))))
+  opt_status = (True, float(loss), max_iter, '')
+  opt1 = DummyData()
+  opt1.x = x
+  x = unravel_func(x)
+  return x, opt_status, opt1
+
+
+def _get_static_covariate_df(trajectories):
+  """The (static) covariate matrix."""
+  raw_v_df = (
+      trajectories.static_covariates.reset_coords(drop=True).transpose(
+          'location', 'static_covariate').to_pandas())
+  # This can then be used with, e.g. patsy.
+  # expanded_v_df = patsy(raw_v_df, ...patsy details...)
+  # Optionally it can be converted back to xa using.
+  #  expanded_v_xa = xarray.DataArray(expanded_v_df)
+  # for now...
+  v_df = raw_v_df
+  return v_df
+
+
 def do_single_bic_run(intensity_family,
                       trajectories,
-                      mech_params_init,
+                      combo_params_init,
                       penalty_scale,
                       mech_bottom_scale,
-                      alpha_init=None,
                       verbosity=1,
                       bic_multiplier=1.,
-                      fudge_scale=100.):
+                      fudge_scale=100.,
+                      optimizer=_lbfgs_optim):
   """Find a sparseness penalized alpha and bic score it.
 
   Note about the BIC calculations:
@@ -425,38 +508,39 @@ def do_single_bic_run(intensity_family,
   Arguments:
     intensity_family:
     trajectories:
-    mech_params_init: Either a single instance of a mechanistic Model fit
-      from the intensity_family, or castable to a list of them with an entry for
-      every trajectory.
+    combo_params_init: A ComboParams.
     penalty_scale: Morally, a vector of Lasso penalty "lambda" parameters. Must
       broadcast to shape (out_dim,).
     mech_bottom_scale: Conceptually a low value for a standard error for
       predicting each mechanistic parameter, below which, extra precision is not
       critical.
       Must broadcast to shape: (out_dim,)
-    alpha_init: None or valid value from previous run, i.e. tensor of
-      (in_dim, out_dim)
     verbosity: (int) Prints some at >=1, lots at >= 2.
     bic_multiplier: (default 1.) optional overall bic scaling correction
     fudge_scale:  (default 100.) controls the extent of the quadratic part. see
       alpha_loss
+    optimizer: _lbfgs_optim or something with the same signature.
 
   Returns:
     BICRunSummary
   """
-  # the covariates.
-  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
+  if not isinstance(combo_params_init, ComboParams):
+    raise TypeError('combo_params_init is not a ComboParams')
+
+  v_df = _get_static_covariate_df(trajectories)
+
   tf_v_orig = tf_float(v_df.values)
   tf_v_means = tf.reduce_mean(tf_v_orig, axis=0, keepdims=True)
-  tf_v_sd = tf.reshape(tf_float(v_df.std(axis=0, ddof=1)), (1, -1))
+  tf_v_sd = tf.reshape(
+      tf_float(np.maximum(v_df.std(axis=0, ddof=1), 1E-6)), (1, -1))
   # The centered-scaled version simply called tf_v.
   # Internally, we'll use this as "X",
   # But in the final report we'll switch back to tf_v_orig as "X".
   tf_v = (tf_v_orig - tf_v_means) / tf_v_sd
 
-  out_dim = len(intensity_family.encoded_param_names)
-  in_dim = v_df.shape[1]
-  stat_n = tf_float(len(trajectories))
+  n_trajectories, in_dim, out_dim = get_model_dims(
+      intensity_family, trajectories)
+  stat_n = tf_float(n_trajectories)
 
   # combo_n_timepoints = tf_float(np.sum(
   #     [len(t.num_new_infections_over_time) for t in trajectories]))
@@ -465,15 +549,6 @@ def do_single_bic_run(intensity_family,
   mech_logprobs = [di.get_mech_logprob() for di in di_list]
 
   try:
-    mech_params0 = list(mech_params_init)
-    assert len(mech_params0) == len(di_list)
-    intercept0 = tf.reduce_mean(tf.stack([
-        mp._x for mp in mech_params0], axis=0), axis=0)
-  except:
-    mech_params0 = [mech_params_init._x] * len(di_list)
-    intercept0 = mech_params_init._x
-  assert get_shape(intercept0) == (out_dim,)
-  try:
     tf.broadcast_to(mech_bottom_scale, (out_dim,))
   except:
     raise ValueError('mech_bottom_scale must broadcast to (out_dim,)')
@@ -481,11 +556,15 @@ def do_single_bic_run(intensity_family,
     tf.broadcast_to(penalty_scale, (out_dim,))
   except:
     raise ValueError('penalty_scale must broadcast to (out_dim,)')
-  if alpha_init is not None:
-    alpha0 = alpha_init * tf.reshape(tf_v_sd, (-1, 1))
-  else:
-    alpha0 = tf_float(np.zeros((in_dim, out_dim)))
-  combo_params0 = ComboParams(intercept0, alpha0, mech_params0)
+  # combo_params_init is in "public X" coordinates, so we must
+  # revert the "final_..." adjustments.
+  combo_params0 = ComboParams(
+      intercept=combo_params_init.intercept + tf.squeeze(
+          tf.matmul(tf_v_means / tf_v_sd,
+                    combo_params_init.alpha * tf.reshape(tf_v_sd, (-1, 1))),
+          axis=0),
+      alpha=combo_params_init.alpha * tf.reshape(tf_v_sd, (-1, 1)),
+      mech_params_raw=combo_params_init.mech_params_raw)
 
   combo_params0_flat, unravel_combo_params = ravel_pytree(combo_params0)
 
@@ -540,26 +619,11 @@ def do_single_bic_run(intensity_family,
   # val_and_grad_combo_loss(combo_params0_flat)
   # unravel_combo_params(val_and_grad_combo_loss(combo_params0_flat)[1])
 
-  if True:
-    opt1 = wrap_minimize(
-        val_and_grad_combo_loss,
-        combo_params0_flat,
-        jac=True,
-        method='L-BFGS-B', # sometimes line-search failure.
-        # method='powell', # slow but it works.
-        options={'maxiter': 10000})
-    opt_status = (opt1.success, float(opt1.fun), opt1.nfev, opt1.message)
-    combo_params = unravel_combo_params(tf_float(opt1.x))
-  else:
-    opt1 = tfp.optimizer.bfgs_minimize(
-        val_and_grad_combo_loss,
-        combo_params0_flat,
-        max_iterations=10000)
-    opt_status = (not bool(opt1.converged.numpy()), float(opt1.objective_value), opt1.num_objective_evaluations, '')
-    combo_params = unravel_combo_params(tf_float(opt1.position))
+  combo_params, opt_status, opt1 = optimizer(
+      val_and_grad_combo_loss, combo_params0_flat, unravel_combo_params)
 
-  if verbosity >= 2 or not opt1.success:
-    print(*opt_status)
+  if verbosity >= 2 or (not opt_status[0] and verbosity >= 1):
+    print('optimization status: %r' % (opt_status,))
 
   # This is the fitted linear model for "X" == tf_v.
   (intercept, alpha, mech_params_raw) = combo_params
@@ -592,24 +656,60 @@ def do_single_bic_run(intensity_family,
 
   # Sanity check:
   mech_params_hat_stack2 = final_intercept + tf.matmul(tf_v_orig, final_alpha)
-  abs_err_check = np.max(np.abs(np_float(mech_params_hat_stack) - np_float(mech_params_hat_stack2)))
-  assert abs_err_check < 1E-4, 'Standardization associated problem.'
+  abs_err = np.abs(
+      np_float(mech_params_hat_stack) - np_float(mech_params_hat_stack2))
+  rel_err_check = np.max(abs_err /
+                         (1. + np.abs(np_float(mech_params_hat_stack))))
+  assert rel_err_check < 1E-2, 'Standardization associated problem.'
 
   if verbosity >= 1:
     print(
-        float(combo_result.combined_bic), np_float(penalty_scale),
-        np_float(combo_result.stat_bic), np_float(combo_result.mech_log_prob))
+        float(combo_result.combined_bic),
+        float(tf.reduce_sum(combo_result.soft_degrees_of_freedom)),
+        np_float(penalty_scale), np_float(combo_result.stat_bic),
+        np_float(combo_result.mech_log_prob))
 
   return BICRunSummary(combo_result, final_combo_params, mech_params_stack,
                        mech_params_hat_stack, intensity_family, penalty_scale,
                        opt_status)
 
+
+def _get_intercept_xarray(tf_intercept, intensity_family):
+  return xarray.DataArray(
+      np_float(tf_intercept),
+      dims=('encoded_param',),
+      coords=dict(encoded_param=intensity_family.encoded_param_names))
+
+
+def _get_alpha_xarray(tf_alpha, data, intensity_family):
+  alpha = xarray.DataArray(
+      np_float(tf_alpha),
+      dims=('static_covariate', 'encoded_param'),
+      coords=dict(
+          static_covariate=data.static_covariate,
+          encoded_param=intensity_family.encoded_param_names))
+  return alpha
+
+
+def _get_intercept_s(intercept, intensity_family):
+  return pd.Series(intercept, index=pd.Index(
+          intensity_family.encoded_param_names, name='encoded_param'))
+
+
+def _get_alpha_df(alpha, v_df, intensity_family):
+  alpha_df = pd.DataFrame(
+      np_float(alpha),
+      index=v_df.columns,
+      columns=pd.Index(
+          intensity_family.encoded_param_names, name='encoded_param'))
+  return alpha_df
+
+
 def summarize_mech_param_fits(run1, trajectories):
-  v_df = trajectories.static_covariates.to_dataset('static_covariate').to_dataframe()
+  v_df = _get_static_covariate_df(trajectories)
   intensity_family = run1.intensity_family
   (intercept, alpha, mech_params_raw) = run1.combo_params
-  alpha_df = pd.DataFrame(
-      np_float(alpha), index=v_df.columns, columns=intensity_family.encoded_param_names)
+  alpha_df = _get_alpha_df(alpha, v_df, intensity_family)
   mech_params_stack = run1.mech_params_stack
   mech_params_hat_stack = run1.mech_params_hat_stack
 
@@ -618,7 +718,7 @@ def summarize_mech_param_fits(run1, trajectories):
     corr_coef = np.corrcoef(
         np_float(mech_params_hat_stack[:, j]),
         np_float(mech_params_stack[:, j]))[0, 1]
-    alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0)
+    alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0, ddof=1)
     alpha_preso_df = pd.DataFrame(collections.OrderedDict([
         ('alpha', alpha_df.iloc[:, j]),
         ('alpha_for_standardized_X', alpha_for_standarized_X),
@@ -635,7 +735,7 @@ def summarize_mech_param_fits(run1, trajectories):
         name=raw_param_name,
         intercept=intercept[j],
         alpha=alpha_df.iloc[:, j],
-        alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0),
+        alpha_for_standarized_X = alpha_df.iloc[:, j] * v_df.std(axis=0, ddof=1),
         alpha_preso_df = alpha_preso_df,
         resid_sd=np.std(resid, ddof=1),
         hat_sd=np.std(np_float(mech_params_hat_stack[:, j]), ddof=1),
@@ -648,3 +748,121 @@ def summarize_mech_param_fits(run1, trajectories):
     plt.ylabel(raw_param_name)
     plt.axis('equal')
     plt.show()
+
+
+def combo_params_from_inits(mech_params_init,
+                            model_dims,
+                            alpha_init=None):
+  """
+    mech_params_init: Either a single instance of a mechanistic Model fit
+      from the intensity_family, or castable to a list of them with an entry for
+      every trajectory.
+    model_dims:  (n_trajectories, in_dim, out_dim)
+    alpha_init: None or valid value from previous run, i.e. tensor of
+      (in_dim, out_dim)
+   Returns:
+     ComboParams.
+   """
+  n_trajectories, in_dim, out_dim = model_dims
+
+  try:
+    list(mech_params_init)
+    mech_init_is_list = True
+  except TypeError:
+    mech_init_is_list = False
+  if mech_init_is_list:
+    mech_params0 = list(mech_params_init)
+    if not len(mech_params0) == n_trajectories:
+      raise ValueError('mech_params_init must be a single value '
+                       'or a list of length n_trajectories.')
+    intercept0 = tf.reduce_mean(tf.stack([
+        mp._x for mp in mech_params0], axis=0), axis=0)
+  else:
+    mech_params0 = [mech_params_init._x] * n_trajectories
+    intercept0 = mech_params_init._x
+  assert get_shape(intercept0) == (out_dim,)
+  if alpha_init is not None:
+    raise NotImplementedError()
+    # alpha0 = alpha_init
+    # intercept0 = intercept0 - tf.squeeze(tf.matmul(tf_v_means / tf_v_sd, alpha0), axis=0)
+  else:
+    alpha0 = tf_float(np.zeros((in_dim, out_dim)))
+  combo_params0 = ComboParams(intercept0, alpha0, mech_params0)
+  return combo_params0
+
+
+def predefined_constant_initializer(
+    intensity_family,
+    data,
+    unused_penalty_scale,
+    unused_mech_bottom_scale,
+    **unused_kwargs):
+  model_dims = get_model_dims(intensity_family, data)
+  return combo_params_from_inits(intensity_family.params0, model_dims, alpha_init=None)
+
+
+def common_fit_initializer(intensity_family,
+                           data,
+                           unused_penalty_scale,
+                           unused_mech_bottom_scale,
+                           use_nelder_mead=False,
+                           **unused_kwargs):
+  model_dims = get_model_dims(intensity_family, data)
+  common_fit_params, _ = find_common_fit(
+      intensity_family=intensity_family,
+      trajectories=data,
+      use_nelder_mead=use_nelder_mead)
+  return combo_params_from_inits(common_fit_params, model_dims, alpha_init=None)
+
+
+def powell_fit_initializer(
+    intensity_family,
+    data,
+    penalty_scale,
+    mech_bottom_scale,
+    begin_with_common_fit=False,
+    **kwargs):
+  if begin_with_common_fit:
+    combo_params_init1 = common_fit_initializer(
+        intensity_family,
+        data,
+        penalty_scale,
+        mech_bottom_scale,
+        **kwargs)
+  else:
+    combo_params_init1 = predefined_constant_initializer(
+      intensity_family,
+      data,
+      penalty_scale,
+      mech_bottom_scale,
+      **kwargs)
+  result = do_single_bic_run(
+      intensity_family,
+      data,
+      combo_params_init1,
+      penalty_scale,
+      mech_bottom_scale,
+      optimizer=_powell_optim,
+      **kwargs)
+  combo_params_init2 = result.combo_params
+  return combo_params_init2
+
+
+def gaussian_initializer_using_mode(
+    intensity_family,
+    data,
+    unused_penalty_scale,
+    unused_mech_bottom_scale,
+    **unused_kwargs):
+  if intensity_family.name != 'Gaussian':
+    raise ValueError(
+        'gaussian_initializer_using_mode only intended for Gaussian intensity_family.'
+    )
+  modal_day = data.time.isel(
+      time=data.new_infections.sum('location', skipna=True).argmax(
+          'time').item())
+  model_dims = get_model_dims(intensity_family, data)
+  params1_np = np_float(intensity_family.params0._x)
+  params1_np[0] = modal_day.item()
+  params1 = intensity_family.params_wrapper().reset(params1_np)
+  return combo_params_from_inits(params1, model_dims, alpha_init=None)

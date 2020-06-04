@@ -1,6 +1,7 @@
 # Lint as: python3
 """Tests for epi_forecast_stat_mech.evaluation.metrics."""
 
+import functools
 import itertools
 
 from absl.testing import parameterized
@@ -23,20 +24,22 @@ config.parse_flags_with_absl()  # Necessary for running on TPU.
 class MetricsTest(parameterized.TestCase):
 
   @parameterized.parameters(
-      dict(metric=jax.partial(metrics.quantile,
-                              quantiles=np.linspace(0, 1, 11)),
-           batch_size=23,
-           nsamples=37,
-           rollout_shape=(2, 3, 4),
-           expected_shape=(11, 23) + (2, 3, 4),
-           seed=0),
-      dict(metric=jax.partial(metrics.target_quantile,
-                              target=np.zeros([11, 101])),
-           batch_size=11,
-           nsamples=400,
-           rollout_shape=(101,),
-           expected_shape=(11, 101),
-           seed=1),
+      dict(
+          metric=functools.partial(
+              metrics.quantile, quantiles=np.linspace(0, 1, 11)),
+          batch_size=23,
+          nsamples=37,
+          rollout_shape=(2, 3, 4),
+          expected_shape=(11, 23) + (2, 3, 4),
+          seed=0),
+      dict(
+          metric=functools.partial(
+              metrics.target_quantile, target=np.zeros([11, 101])),
+          batch_size=11,
+          nsamples=400,
+          rollout_shape=(101,),
+          expected_shape=(11, 101),
+          seed=1),
   )
   def testMetricsShape(
       self, metric, batch_size, nsamples, rollout_shape, expected_shape, seed):

@@ -92,6 +92,45 @@ class TestSums(absltest.TestCase):
         new_ds.total_infections.data,
         np.array([[10, 0]]))
 
+class TestValidateData(absltest.TestCase):
+
+  def setUp(self):
+    super(TestValidateData, self).setUp()
+    self.num_samples = 1
+    self.num_locations = 43
+    self.num_time_steps = 77
+    self.num_static_covariates = 2
+    self.data = data_model.new_model(self.num_samples, self.num_locations,
+                                     self.num_time_steps,
+                                     self.num_static_covariates)
+
+  def test_validate_ok(self):
+    data_model.validate_data(self.data)
+
+  def test_validate_ok2(self):
+    data_model.validate_data(self.data.squeeze('sample'))
+
+  def test_validate_ok_samples(self):
+    data_model.validate_data(self.data, require_samples=True)
+
+  def test_validate_ok_no_samples(self):
+    data_model.validate_data(self.data.squeeze('sample'), require_no_samples=True)
+
+  def test_type_failure(self):
+    with self.assertRaisesRegex(ValueError, 'data must be an xarray'):
+      data_model.validate_data(None)
+
+  def test_no_static(self):
+    data = self.data.copy()
+    del data['static_covariates']
+    with self.assertRaisesRegex(ValueError, 'data is missing required data_vars:.*'):
+      data_model.validate_data(data)
+
+  def test_no_missing_in_static(self):
+    data = self.data.copy()
+    data.static_covariates[1, 1] = np.NaN
+    with self.assertRaisesRegex(ValueError, 'null data is not allowed in data.static_covariates.'):
+      data_model.validate_data(data)
+
 if __name__ == '__main__':
   absltest.main()
-

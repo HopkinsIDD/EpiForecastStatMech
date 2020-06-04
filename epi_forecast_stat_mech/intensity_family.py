@@ -6,6 +6,6 @@ import collections
 class IntensityFamily(
     collections.namedtuple('IntensityFamily', [
         'name', 'intensity', 'params_wrapper', 'params0', 'param_names',
-        'encoded_param_names'
+        'encoded_param_names', 'mech_bottom_scale0'
     ])):
   pass
