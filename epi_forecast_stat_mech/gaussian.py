@@ -31,6 +31,9 @@ class GaussianParams(object):
   def K(self):
     return tf.exp(self._x[2])
 
+  def as_tuple(self):
+    return (float(self.m), float(self.s), float(self.K))
+
   def __str__(self):
     return 'GaussianParams(m={m}, s={s}, K={K})'.format(
         m=self.m, s=self.s, K=self.K)
@@ -56,4 +59,5 @@ GaussianFamily = IntensityFamily(
     params_wrapper=GaussianParams,
     params0=params0,
     param_names=['m', 's', 'K'],
-    encoded_param_names=['m', 'log_s', 'log_K'])
+    encoded_param_names=['m', 'log_s', 'log_K'],
+    mech_bottom_scale0=tf_float([3., .1, .1]))

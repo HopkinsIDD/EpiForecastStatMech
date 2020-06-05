@@ -1,11 +1,13 @@
 # Lint as: python3
 """Tests for epi_forecast_stat_mech.statistical_models.network_models.py."""
 
+from absl.testing import absltest
 from absl.testing import parameterized
 from epi_forecast_stat_mech.statistical_models import network_models
 import jax
+from jax.config import config
 
-from absl.testing import absltest
+config.parse_flags_with_absl()  # Necessary for running on TPU.
 
 
 class NetworkModelsTest(parameterized.TestCase):
