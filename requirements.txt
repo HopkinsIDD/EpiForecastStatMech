@@ -10,6 +10,7 @@ seaborn
 jax
 jaxlib
 glmnet_py
+sklearn
 tensorflow==2.2.0rc1
 tensorflow_probability
 xarray
