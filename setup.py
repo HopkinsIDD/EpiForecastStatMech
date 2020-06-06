@@ -11,6 +11,7 @@ setuptools.setup(
         "pandas",
         "matplotlib",
         "seaborn",
+        "sklearn",
         "tensorflow",
         "tensorflow_probability",
         "jax",
