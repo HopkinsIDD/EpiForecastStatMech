@@ -6,6 +6,7 @@ from . import gaussian
 from .gaussian import GaussianFamily
 from . import soft_laplace
 from .soft_laplace import SoftLaplaceFamily
+from .high_level import *
 
 from . import constants
 from . import data_model

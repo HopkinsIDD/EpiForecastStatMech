@@ -1,235 +1,199 @@
-"""# Data Simulation
+"""Data Simulation using the VC model.
 
-# VC Model
-
-Write a function that generates simulated infection curves from VC model with a single, static covariate.
+Write a function that generates simulated infection curves from VC model with a
+single, static covariate.
 """
 
+from . import data_model
 import numpy as np
 from scipy import stats
-import pandas as pd
-import collections
-import matplotlib.pyplot as plt
+import xarray as xr
 
-#TODO: Duplicates some code in sir_sim. Move to a higher-level module
-meta_data = collections.namedtuple('meta_data', 
-                                   ['num_epidemics', 
-                                    'epidemic_id', 
-                                    'pred_final_epidemic_size', 
-                                    'percent_infected',  
-                                    'r',
-                                    'p'])
-"""A named tuple to hold a single disease metadata.
+SPLIT_TIME=100
 
-num_epidemics: an int representing the total number of epidemics to simulate
-epidemic_id: an int representing the identifier of this epidemic
-pred_final_epidemic_size: an int representing the predicted final size of the epidemic
-percent_infected: a float representing the percent of the population that has been infected at this point in time, for each epidemic
-r: a float representing the growth rate of the disease,
-p: a float representing the extent that r is super or sub exponential
-"""
 
-#TODO: Duplicates some code in sir_sim. Move to a higher-level module
-disease_trajectory = collections.namedtuple('disease_trajectory', 
-                                            ['unique_id', 
-                                             'simulation_number', 
-                                             'epidemic_number', 
-                                             'num_new_infections_over_time', 
-                                             'estimated_infections', 
-                                             'ground_truth_infections_over_time', 
-                                             'total_infections', 
-                                             'v', 
-                                             'alpha', 
-                                             'metadata',
-                                             't',
-                                             'ground_truth_t',
-                                             'cumulative_infections_over_time',
-                                             'ground_truth_cumulative_infections_over_time'])  
-"""A named tuple to hold a single disease trajectory and all relevant metadata.
-    
-unique_id: an int representing the unique identifier of each trajectory
-simulation_number: an int representing the simulation we generated this trajectory in, only useful for debugging
-epidemic_number: an int representing the epidemic we generated this trajectory in, only useful for debugging
-num_new_infections_over_time: a np.array of length T representing the number of new infections at each time step up to a threshold
-total_estimated_infections: an int representing our estimate of the total infections
-ground_truth_infections_over_time: a np.array of length TT representing the *ground truth* number of new infections at each time step
-total_infections: an int representing the ground truth number of total infections
-total_infections: an int representing the total *ground truth* number of infections
-v: a np.array of shape (num_epidemics, num_covariates) and type float representing the covariates used for each epidemic
-alpha: a np.array of shape (num_covariates,) and type float representing the weights of each covariate
-meta_data: a named tuple of type meta_data
-t: a np.array of shape (T,) representing the simulation time of each point in the epidemic
-ground_truth_t: a np.array of shape (TT,) representing the simulation time of each point in the ground truth simulation
-cumulative_infections_over_time: a np.array representing the "non-predictive" cumsum of the epidemic
-ground_truth_cumulative_infections_over_time: a np.array representing the "non-predictive" cumsum of the ground truth simulation
-"""  
+def final_size_poisson_dist(num_locations):
+  """Return final size of the epidemic using a poisson distribution.
 
-def generate_ground_truth_VC_curve(pred_final_epidemic_size, r, p):
-  """
-  Generate the epidemic curve observed to date using the VC model. Assume we
-  start with 1 infected individual, and a disease progression based on a
-  ViboudChowell model parameterized by r and p.
+  Calculate final size of the epidemic using a single, randomly generated
+  covariate for each location and sampling from a Poisson distribution.
 
   Args:
-    pred_final_epidemic_size: an int representing the predicted total number 
-                              of people to get the disease
-    r: a float representing the growth rate of the disease
-    p: a float representing the the extent that r is super or sub exponential
-  
+    num_locations: an int representing the number of locations to simulate
+
   Returns:
-    list_of_new_infections: a np.array of shape (T,) representing the ground
-                            truth number of infected individuals as a function of time
+    final_sizes: a np.array of shape (num_locations, 1) consisting of the final
+    size for each epidemic
+    v: a np.array of shape (num_locations, 1) consisting of the randomly
+    generated covariate for each epidemic
+    alpha: a np.array of shape (1, 2) consisting of the weights for each
+    covariate
   """
-  num_new_infections = 1 # always start with one infection at time 0
+  v = np.random.uniform(0.0, 3.0, (num_locations, 1))
+  alpha = np.array([[3, np.log10(3)]])
+  final_sizes = 10**(alpha[0, 0] + alpha[0, 1] * v[:, 0])
+  return final_sizes, v, alpha
 
-  list_of_new_infections = np.array([num_new_infections])
 
-  #While there are still infected people
-  while num_new_infections > 0: 
-    #Determine the number of new infections
-    #By drawing from a poisson distribution 
-    total_infected = np.sum(list_of_new_infections)
-    frac_infected = float(total_infected)/float(pred_final_epidemic_size)
-    mu = r*total_infected**p*(1- frac_infected)
-    num_new_infections = stats.poisson.rvs(mu)
-
-    #Record the number of infections that occured at this time point
-    list_of_new_infections = np.append(list_of_new_infections, num_new_infections)
-    
-  return list_of_new_infections
-
-def generate_observed_VC_curves(pred_final_epidemic_size, percent_infected, r, p):
-  """
-  Generate the epidemic curve observed to date using the VC model.
+def new_vc_simulation_model(num_samples,
+                            num_locations,
+                            num_time_steps,
+                            num_static_covariates=1):
+  """Return a zero data_model.new_model with extra simulation parameters.
 
   Args:
-    pred_final_epidemic_size: an int representing the predicted total number 
-                              of people to get the disease
-    percent_infected: a float representing the percent of the population that 
-                  has been infected at this point in time
-    r: a float representing the growth rate of the disease
-    p: a float representing the the extent that r is super or sub exponential
-  
+    num_samples: int representing the number of unique samples to run for each
+      location
+    num_locations: int representing the number of locations to model epidemics
+      for
+    num_time_steps: int representing the maximum number of time steps the
+      epidemic can have
+    num_static_covariates: int representing the number of static covariates for
+      each location. Currently only 1 is supported.
+
   Returns:
-    observed_infections: a np.array of shape (T,) representing the number of
-                         newly infected individuals as a function of time, 
-                         up to the current time
-    ground_truth_infections: an np.array of shape(TT,) representing the number 
-                             of newly infectecd individuals over the course of 
-                             the *whole* epidemic
+    ds: an xr.Dataset representing the new infections and
+      covariates for each location and representing the simulation parameters.
+      All datavalues are initialized to 0.
   """
-  # We require that the total number of infections is >10
-  # to eliminate stochastic fadeouts
-  total_infections = 0
-  # also have a count limit to avoid an infinite loop
-  count = 0
-    
-  while total_infections < 10 and count<5000:
-    ground_truth_infections = generate_ground_truth_VC_curve(pred_final_epidemic_size, r, p)
-    total_infections = np.sum(ground_truth_infections)
-    count += 1
+  if num_time_steps < SPLIT_TIME:
+    raise ValueError('num_time_steps must be at least %d' % (SPLIT_TIME,))
+  ds = data_model.new_model(num_samples, num_locations, num_time_steps,
+                            num_static_covariates)
+  ds['canonical_split_time'] = SPLIT_TIME
+  ds['canonical_split_time'].attrs['description'] = (
+      'Int representing the canonical time at which to split the data.')
+  ds['growth_rate'] = data_model.new_dataarray({'location': num_locations})
+  ds['growth_rate'].attrs['description'] = (
+      'Float representing the growth rate in each location (r).'
+      'This is used to simulate the number of new infections.')
 
-  # calculate the target size for this epidemic
-  target_size = pred_final_epidemic_size * percent_infected
+  ds['growth_rate_exp'] = data_model.new_dataarray({'location': num_locations})
+  ds['growth_rate_exp'].attrs['description'] = (
+      'Float representing the extent that the growth rate is'
+      'super or sub exponential (p).'
+      'This is used to simulate the number of new infections.')
 
-  # Find the current time, this is when the cumulative size of the model is still smaller than the target size
-  # must be at least 2
-  cumulative_infections = np.cumsum(ground_truth_infections)
-  current_time = np.max([np.max(np.where(cumulative_infections < target_size)), 2])
-
-  # Save list of infected individuals up until we reach the target_size
-  # This is the 'history' of the epidemic up until the current time
-  observed_infections = ground_truth_infections[:current_time]
-
-  return observed_infections, ground_truth_infections
+  return ds
 
 
-def generate_VC_simulations(pred_final_epidemic_size_fn, pred_parameters, num_simulations, num_epidemics, r=1.0, p=0.6):
+def generate_ground_truth(pred_size, r, p, num_samples, num_time_steps):
+  """Generate the epidemic curve observed to date using the VC model.
+
+  Assume we start with 1 infected individual, and a disease progression
+  based on a ViboudChowell model parameterized by r and p.
+  Args:
+    pred_size: a xr.DataArray representing the predicted total number of people
+      to get the disease in each location
+    r: a xr.DataArray representing the growth rate of the disease in each
+      location
+    p: a xr.DataArray representing the extent that the growth rate is super or
+      sub exponential in each location
+    num_samples: an int representing the number of samples to run at each
+      location
+    num_time_steps: an int representing the number of simulation 'days' to run
+      at each location.
+
+  Returns:
+    new_infections: a xr.DataArray representing the new_infections at each
+      (sample, location, time).
   """
-  Generate many simulations of VC curves.
-  Each simulation contains num_epidemics.
-  The epidemics may have different covariates, and thus different trajectories.
-  However between simulations the covariates are the same, so the only difference 
+  num_locations = r.sizes['location']
+
+  new_infections = data_model.new_dataarray({
+      'sample': num_samples,
+      'location': num_locations,
+      'time': num_time_steps
+  }).astype(int)
+
+  # start with 1 infected individual at time t=0
+  total_infected = xr.ones_like(new_infections.sum('time'))
+  frac_infected = total_infected.astype(float) / pred_size
+  new_infections[dict(time=0)] = total_infected
+
+  for t in range(1, num_time_steps):
+    # Determine the number of new infections
+    # by drawing from a poisson distribution
+    # TODO(edklein) is this right?
+    mu = total_infected**p * r * (1 - frac_infected)
+    new_infections[dict(time=t)] = stats.poisson.rvs(xr.ufuncs.maximum(
+        mu, 0.)).astype(int)
+
+    # update for next round
+    total_infected = new_infections.sum('time')
+    frac_infected = total_infected.astype(float) / pred_size
+
+  return new_infections
+
+
+def generate_simulations(final_size_fn,
+                         num_samples,
+                         num_locations,
+                         num_time_steps=500,
+                         constant_r=1.0,
+                         constant_p=0.6,
+                         fraction_infected_limits=(0.05, 1.0),
+                         shift_timeseries=True):
+  """Generate many samples of VC curves.
+
+  Generate many VC curves. Each sample contains num_locations.
+  The locations may have different covariates, and thus different trajectories.
+  However between samples the covariates are the same, so the only difference
   is statistical.
 
   Args:
-    pred_final_epidemic_size_fn: a function to generate the predicted final size of the epidemic
-    pred_parameters: a tuple containing all the parameters needed by pred_final_epidemic_size_fn
-    num_simulations: an int representing the number of simulations to run
-    num_epidemics: an int representing the number of epidemics to run in each simulation
-    r: a float representing the constant recovery rate (default 1.0)
-    p: an int representing the constant population size (default 0.6)
-  Returns:
-    list_of_disease_trajectory: a list of disease_trajectory named tuples
-  """
-  list_of_meta_data = [] 
-  list_of_disease_trajectory = [] 
+    final_size_fn: a partialfunction to generate the predicted final size of the
+      epidemic when passed the number of locations.
+    num_samples: an int representing the number of simulations to run
+    num_locations: an int representing the number of epidemics to run in each
+      simulation
+    num_time_steps: an int representing the number of simulation 'days' (default
+      500)
+    constant_r: a float representing the constant growth rate (default 1.0)
+    constant_p: a float representing the constant degree to which the growth
+      rate is sub or super exponential (default 0.6)
+    fraction_infected_limits: A pair of floats in [0, 1] representing the limits
+      on the fraction of the population that will be infected at SPLIT_TIME.
+    shift_timeseries: A bool indicating whether we should shift the trajectories
+      based on fraction_infected_limits. If False, all trajectories will start
+      with 1 infection at time t=0.
 
+  Returns:
+    trajectories: a xr.Dataset of the simulated infections over time
+  """
   # generate growth rate for all simulations,
-  # this is constant between simulations 
-  predicted_final_sizes, v, alpha = pred_final_epidemic_size_fn(*pred_parameters)
-
-  # randomly generate the percentage of infected people for each epidemic
   # this is constant between simulations
-  #TODO: Make this an argument you can pass in
-  percent_infected = np.random.uniform(0.05, 1.0, num_epidemics)
-  
-  # generate meta data for each epidemic
-  # TODO: do better
-  for i in range(num_epidemics):
-    md = meta_data(num_epidemics, i, predicted_final_sizes[i], percent_infected[i],
-                   r, p)
-    list_of_meta_data.append(md)
+  final_sizes, v, alpha = final_size_fn(num_locations)
 
-  unique_id = 0
-  for j in range(num_simulations):
-    for k in range(num_epidemics):
-      observed_infections, ground_truth_infections = generate_observed_VC_curves(*list_of_meta_data[k][2:])
-      estimated_infections = predicted_final_sizes[i]
-      total_infections = np.sum(ground_truth_infections)
+  num_static_covariates = v.shape[1]
 
-      t = np.arange(len(observed_infections))
-      ground_truth_t = np.arange(len(ground_truth_infections))
-      
-      # these are "non-predictive" cumsums.
-      # previous day cumsums
-      cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], observed_infections)))[:-1]
-      ground_truth_cumulative_infections_over_time = np.cumsum(np.concatenate(([0.], ground_truth_infections)))[:-1]
+  trajectories = new_vc_simulation_model(num_samples, num_locations,
+                                         num_time_steps, num_static_covariates)
+  trajectories['final_size'] = xr.DataArray(final_sizes, dims='location')
+  trajectories['static_weights'] = xr.DataArray(
+      alpha, dims=('static_covariate', 'static_weight'))
+  trajectories['static_covariates'] = xr.DataArray(
+      v, dims=('location', 'static_covariate'))
 
-      dt = disease_trajectory(unique_id=unique_id, 
-                              simulation_number=j, 
-                              epidemic_number=k, 
-                              num_new_infections_over_time=observed_infections, 
-                              estimated_infections=estimated_infections,
-                              ground_truth_infections_over_time=ground_truth_infections,
-                              total_infections=total_infections, 
-                              v = v[k], 
-                              alpha = alpha, 
-                              metadata=list_of_meta_data[k],
-                              t=t,
-                              ground_truth_t = ground_truth_t,
-                              cumulative_infections_over_time=cumulative_infections_over_time,
-                              ground_truth_cumulative_infections_over_time=ground_truth_cumulative_infections_over_time)
-      
-      list_of_disease_trajectory.append(dt)
-      unique_id += 1
-  
-  return list_of_disease_trajectory
+  trajectories['growth_rate'].data = constant_r * np.ones(num_locations)
+  trajectories['growth_rate_exp'].data = constant_p * np.ones(num_locations)
 
+  # Randomly generate the fraction of infected people for each
+  # sample and location.
+  trajectories['fraction_infected'] = xr.DataArray(np.random.uniform(
+      fraction_infected_limits[0], fraction_infected_limits[1],
+      (num_samples, num_locations)), dims=['sample', 'location'])
+  # Initially, all trajectories start at time 0.
+  # The actual start_time will be updated to be consistent with
+  # fraction_infected being infected at SPLIT_TIME.
+  dummy_start_time = np.zeros((num_locations,), dtype=np.int32)
+  trajectories['new_infections'] = generate_ground_truth(
+      trajectories.final_size, trajectories.growth_rate,
+      trajectories.growth_rate_exp, trajectories.sizes['sample'],
+      trajectories.sizes['time'])
 
-def pred_final_size_poisson_dist(num_epidemics):
-  """
-  Predicted final size of the epidemic depend on a single covariate that is randomly generated for each epidemic
-
-  Args:
-    num_epidemics: an int representing the number of epidemics to simulate
-
-  Returns:
-    final_sizes: a np.array of shape (num_epidemics,) consisting of the final size for each epidemic
-    v: a np.array of shape (num_epidemics,) consisting of the randomly generated covariate for each epidemic
-    alpha: a np.array of shape (2,) consisting of the weights for each covariate
-  """
-  v = np.random.uniform(0.0, 3.0, (num_epidemics,))
-  alpha = np.array([3, np.log10(3)])
-  final_sizes = 10**(alpha[0] + alpha[1]*v)
-  return final_sizes, v, alpha
+  if not shift_timeseries:
+    return trajectories
+  else:
+    return data_model.shift_timeseries(trajectories, fraction_infected_limits,
+                                       SPLIT_TIME)

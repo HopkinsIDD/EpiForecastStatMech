@@ -1,14 +1,17 @@
 # Lint as: python3
 """A rolled out version of the rt.live model."""
 
-from epi_forecast_stat_mech import high_level
+from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
 import numpy as np
 import pandas as pd
 import scipy.stats as sps
 import xarray as xr
 
+MAX_LAMBDA = 1e9
 
-class RtLiveEstimator(high_level.Estimator):
+
+class RtLiveEstimator(estimator_base.Estimator):
   """A rolled out version of the rt.live model, following github implementation.
 
   See https://github.com/k-sys/covid-19/blob/master/Realtime%20R0.ipynb.
@@ -82,6 +85,9 @@ class RtLiveEstimator(high_level.Estimator):
     # The github version stores the posterior for each day, but we only care
     # about the final posterior for forecasting purposes.
     posterior = self.prior[:, np.newaxis]
+    # Explicitly broadcast to ensure posterior has the right shape even if sr is
+    # a single day (so the body of the for loop is skipped).
+    posterior = np.broadcast_to(posterior, posterior.shape[:-1] + sr.shape[-1:])
     for current_day in sr.index[1:]:
       # Update for process noise.
       posterior = self.process_matrix.values @ posterior
@@ -95,6 +101,7 @@ class RtLiveEstimator(high_level.Estimator):
     return pd.DataFrame(posterior, index=self.r_t_range, columns=sr.columns)
 
   def fit(self, observations: xr.Dataset):
+    data_model.validate_data(observations, require_no_samples=True)
     sr = observations['new_infections'].to_pandas().T
     sr = self._prepare_cases(sr)
     self.posterior = self._get_posterior(sr)
@@ -116,6 +123,7 @@ class RtLiveEstimator(high_level.Estimator):
     for _ in range(time_steps):
       # Sample number of new cases today.
       lam = ks[-1] * np.exp(self.GAMMA * (rts - 1))
+      lam = np.minimum(lam, MAX_LAMBDA)
       ks.append(sps.poisson.rvs(lam))
 
       # Update Rt based on process noise.
@@ -135,4 +143,11 @@ class RtLiveEstimator(high_level.Estimator):
     return xr.DataArray(
         ks[1:],
         coords=(dates[1:], self.latest_k.index, range(num_samples)),
-        dims=('time', self.latest_k.index.name, 'sample'))
+        dims=('time', self.latest_k.index.name,
+              'sample')).rename('new_infections')
+
+
+def get_estimator_dict():
+  estimator_dict = {}
+  estimator_dict['rtlive'] = RtLiveEstimator()
+  return estimator_dict
