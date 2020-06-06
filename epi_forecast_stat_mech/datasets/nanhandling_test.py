@@ -1,5 +1,5 @@
 # Lint as: python3
-"""Tests for google3.third_party.py.epi_forecast_stat_mech.datasets.nanhandling."""
+"""Tests for epi_forecast_stat_mech.datasets.nanhandling."""
 from absl.testing import absltest
 from epi_forecast_stat_mech.datasets import nanhandling
 import numpy as np
