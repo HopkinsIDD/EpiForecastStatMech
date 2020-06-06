@@ -1,5 +1,5 @@
 # Lint as: python3
-"""Tests for epi_forecast_stat_mech.high_level."""
+"""Tests for epi_forecast_stat_mech.sparse_estimator."""
 
 import functools
 

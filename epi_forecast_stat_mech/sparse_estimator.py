@@ -53,14 +53,16 @@ def mech_model_class_from_intensity_family(intensity_family):
 
 class SparseEstimator(estimator_base.Estimator):
 
-  def __init__(self,
-               intensity_family=viboud_chowell.ViboudChowellFamily,
-               initializer=sparse.common_fit_initializer,
-               penalty_scale_init=None,
-               mech_bottom_scale=None,
-               penalty_factor_grid=tuple(
-                   np.exp(np.linspace(np.log(.1), np.log(1000.), num=17))),
-               optimizer=sparse._lbfgs_optim):
+  def __init__(
+      self,
+      intensity_family=viboud_chowell.ViboudChowellFamily,
+      initializer=sparse.common_fit_initializer,
+      penalty_scale_init=None,
+      mech_bottom_scale=None,
+      penalty_factor_grid=tuple(
+          np.exp(np.arange(np.log(.1), np.log(100001.), .25 * np.log(10.)))),
+      optimizer=sparse._lbfgs_optim,
+      dof_cap=None):
     self.intensity_family = intensity_family
     self.initializer = initializer
     n_mech_params = len(intensity_family.encoded_param_names)
@@ -76,6 +78,7 @@ class SparseEstimator(estimator_base.Estimator):
     self.run_map = collections.OrderedDict()
     self.initialize_from_last_fit = True
     self.optimizer = optimizer
+    self.dof_cap = dof_cap
 
   def run_one_bic(self, penalty_scale, optimizer=None, verbosity=1):
     if optimizer is None:
@@ -130,13 +133,19 @@ class SparseEstimator(estimator_base.Estimator):
       bic = float(result.combo_result.combined_bic)
       dof = _get_total_dof(result)
       log10_factor = np.log10(penalty_factor)
-      bic_extra_pen1 = bic + log10_factor_weight * log10_factor
-      bic_extra_pen2 = bic + log10_factor_weight * log10_factor - dof_extra_weight * dof
+      dof_above_cap = False if self.dof_cap is None else (dof > self.dof_cap)
+      dof_above_cap_penalty = np.inf if dof_above_cap else 0.
+      bic_extra_pen1 = (
+          bic + log10_factor_weight * log10_factor - dof_above_cap_penalty)
+      bic_extra_pen2 = (
+          bic + log10_factor_weight * log10_factor - dof_extra_weight * dof -
+          dof_above_cap_penalty)
       opt_success = result.opt_status[0]
       summary_accum.append((run_index, penalty_factor, bic, dof, bic_extra_pen1,
-                            bic_extra_pen2, opt_success))
+                            bic_extra_pen2, opt_success, dof_above_cap))
     column_names = ('run_index', 'penalty_factor', 'bic', 'dof',
-                    'bic_extra_pen1', 'bic_extra_pen2', 'opt_success')
+                    'bic_extra_pen1', 'bic_extra_pen2', 'opt_success',
+                    'dof_above_cap')
     bic_df = pd.DataFrame(summary_accum, columns=column_names)
     self.bic_df = bic_df
     bic_selection = bic_df.iloc[bic_df['bic'].idxmax(), :]
@@ -290,6 +299,9 @@ class SparseEstimator(estimator_base.Estimator):
 def get_estimator_dict():
   estimator_dict = {}
   estimator_dict['sparse_classic'] = SparseEstimator()
+  for cap in [1, 2, 3, 4, 5, 10]:
+    estimator_key = f'sparse_classic_dof_cap_{cap:02d}'
+    estimator_dict[estimator_key] = SparseEstimator(dof_cap=cap)
   estimator_dict['sparse_gaussian'] = SparseEstimator(
       intensity_family=gaussian.GaussianFamily,
       initializer=sparse.gaussian_initializer_using_mode)
