@@ -171,11 +171,13 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   # We don't want to shift any infection curves so they start before time 0
   shifts = np.where(shifts_all > 0, shifts_all, 0)
 
-  shifted_new_infections, shift_dataarray = _helper_shift_dataarray(
-      shifts, trajectories.new_infections)
+  for d_var in trajectories.data_vars:
+    if 'time' in trajectories[d_var].dims:
+      shifted_d_var, shift_dataarray = _helper_shift_dataarray(
+          shifts, trajectories[d_var])
+      trajectories[d_var] = shifted_d_var
+      trajectories['start_time'] = shift_dataarray
 
-  trajectories['new_infections'] = shifted_new_infections
-  trajectories['start_time'] = shift_dataarray
   return trajectories
 
 

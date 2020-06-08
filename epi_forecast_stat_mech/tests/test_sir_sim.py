@@ -50,9 +50,10 @@ class TestGenerateSirSimulations(absltest.TestCase):
         gen_dynamic_beta_fn=dynamic_beta_fn)
 
     shift_growth_rate = trajectories.growth_rate.shift(time=1)
-    num_diff_betas = (trajectories.growth_rate.sel(time=slice(None, self.num_time_steps-1)) !=
+    num_diff_betas = (trajectories.growth_rate.sel(
+        time=slice(None, self.num_time_steps-1)) !=
                       shift_growth_rate.sel(time=slice(1, None))).sum()
-    assert num_diff_betas == self.num_epidemics
+    assert num_diff_betas >= self.num_epidemics
 
   def test_social_distancing_sanity(self):
     beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
