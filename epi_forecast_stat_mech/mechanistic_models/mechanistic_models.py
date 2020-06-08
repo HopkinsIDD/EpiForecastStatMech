@@ -847,6 +847,10 @@ class DynamicIntensityModel(IntensityModel):
   def init_parameters(self):
     return self.init_flat
 
+  def log_prior(self, parameters):
+    """Returns log_probability prior of the `parameters` of the model."""
+    return jnp.zeros_like(parameters)
+
   def log_likelihood(self, flat_parameters, epidemic_record):
     parameters = self.unravel(flat_parameters)
     time_dep_params = self.DynamicModule.call(

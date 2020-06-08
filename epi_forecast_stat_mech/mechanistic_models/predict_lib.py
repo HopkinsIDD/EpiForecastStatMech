@@ -9,23 +9,8 @@ import xarray
 from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
 
 
-def simulate_predictions(mech_model,
-                         mech_params,
-                         data,
-                         epidemics,
-                         time_steps,
-                         num_samples,
-                         rng,
-                         include_observed=False):
-
-  predictions = monte_carlo.trajectories_from_model(
-      mech_model,
-      mech_params,
-      rng,
-      epidemics,
-      time_steps,
-      num_samples,
-      include_observed)
+def wrap_predictions(predictions, data, num_samples, time_steps,
+                     include_observed):
 
   # TODO(jamieas): consider indexing by seed.
   sample = np.arange(num_samples)
@@ -47,6 +32,52 @@ def simulate_predictions(mech_model,
       predictions,
       coords=[location, sample, time],
       dims=['location', 'sample', 'time']).rename('new_infections')
+
+
+def simulate_predictions(mech_model,
+                         mech_params,
+                         data,
+                         epidemics,
+                         time_steps,
+                         num_samples,
+                         rng,
+                         include_observed=False):
+
+  predictions = monte_carlo.trajectories_from_model(
+      mech_model,
+      mech_params,
+      rng,
+      epidemics,
+      time_steps,
+      num_samples,
+      include_observed)
+  return wrap_predictions(predictions, data, num_samples, time_steps,
+                          include_observed)
+
+
+def simulate_dynamic_predictions(mech_model,
+                                 mech_params,
+                                 data,
+                                 epidemics,
+                                 dynamic_covariates,
+                                 num_samples,
+                                 rng,
+                                 include_observed=False):
+
+  predictions = monte_carlo.trajectories_from_dynamic_model(
+      mech_model,
+      mech_params,
+      rng,
+      epidemics,
+      dynamic_covariates,
+      num_samples)
+
+  time_steps = dynamic_covariates.sizes['time'] - epidemics.t.shape[1]
+  full_predictions = wrap_predictions(predictions, data, num_samples,
+                                      time_steps, True)
+  if not include_observed:
+    return full_predictions.isel(time=slice(-time_steps, None))
+  return full_predictions
 
 
 def encoded_mech_params_array(data, mech_model, mech_params):
