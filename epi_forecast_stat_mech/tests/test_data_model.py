@@ -3,6 +3,7 @@ from absl.testing import absltest
 
 from epi_forecast_stat_mech import data_model
 import numpy as np
+import xarray as xr
 
 
 class TestNewDataArray(absltest.TestCase):
@@ -89,6 +90,25 @@ class TestSums(absltest.TestCase):
     np.testing.assert_array_equal(
         new_ds.total_infections.data,
         np.array([10, 0]))
+
+
+
+class TestShiftData(absltest.TestCase):
+
+  def setUp(self):
+    super(TestShiftData, self).setUp()
+    self.num_locations = 3
+    self.num_time_steps = 5
+    self.dataarray = xr.DataArray(
+        np.ones((self.num_locations, self.num_time_steps)),
+        dims=['location', 'time'])
+    self.shifts = 2 * np.ones(self.num_locations,dtype=int)
+
+  def test_shift_array(self):
+    shifted_data, _ = data_model._helper_shift_dataarray(self.shifts, self.dataarray)
+    expected_num_shifts = 2*self.num_locations
+    expected_sum = self.num_locations*self.num_time_steps - expected_num_shifts
+    assert expected_sum == shifted_data.sum()
 
 
 class TestValidateData(absltest.TestCase):

@@ -100,6 +100,41 @@ def new_model(num_locations, num_time_steps,
   return ds
 
 
+def _helper_shift_dataarray(shifts, array_to_shift):
+  """Helper function to shift array_to_shift by shift amount.
+
+  Args:
+    shifts: a np.array of shape (location, ) containing the values to
+      shift by.
+    array_to_shift: an xr.DataArray with dimensions (location,) to shift
+  Returns:
+    shifted_array: a copy of array_to_shift with the values shifted in time by
+      shifts.
+    shift_dataarray: an xr.DataArray of dimension (location,) containing
+      the times we shifted by.
+  """
+
+  shift_dataarray = xr.DataArray(shifts, dims=['location'])
+  old_ni = array_to_shift.copy()
+  shifted_array = xr.concat([
+      old_ni.isel(location=k).shift(time=shifts[k], fill_value=0)
+      for k in range(old_ni.sizes['location'])
+  ],
+                            dim='location')
+
+  # Count the number of trajectories we don't shift,
+  # raise a warning if we exceed 1/4 of all trajectories
+  num_not_shifted = xr.where(shift_dataarray == 0, 1,
+                             0).sum(['location'])
+
+  if num_not_shifted > (len(array_to_shift.location) / 4):
+    logging.warning('More than 1/4 of the trajectories were not shifted in time'
+                    ' in %d locations or samples. Consider changing '
+                    'SPLIT_TIME.', (num_not_shifted.values))
+
+  return shifted_array, shift_dataarray
+
+
 def shift_timeseries(data, fraction_infected_limits, split_time):
   """Return a copy of data with shifted infection start times.
 
@@ -136,22 +171,9 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   # We don't want to shift any infection curves so they start before time 0
   shifts = np.where(shifts_all > 0, shifts_all, 0)
 
-  # TODO(edklein) make this its own function
-  shift_dataarray = xr.DataArray(shifts, dims=['location'])
+  shifted_new_infections, shift_dataarray = _helper_shift_dataarray(
+      shifts, trajectories.new_infections)
 
-  # Count the number of trajectories we don't shift,
-  # raise a warning if we exceed 1/4 of all trajectories
-  num_traj_not_shifted = xr.where(shift_dataarray == 0, 1,
-                                  0).sum(['location'])
-  if num_traj_not_shifted > (len(trajectories.location) / 4):
-    logging.warning('More than 1/4 of the trajectories were not shifted in time'
-                    ' in %d locations. Consider changing '
-                    'SPLIT_TIME.', (num_traj_not_shifted.values))
-
-  old_ni = trajectories.new_infections
-  shifted_new_infections = xr.concat([old_ni.isel(location=k).shift(
-      time=shifts[k], fill_value=0)
-      for k in range(old_ni.sizes['location'])], dim='location')
   trajectories['new_infections'] = shifted_new_infections
   trajectories['start_time'] = shift_dataarray
   return trajectories
