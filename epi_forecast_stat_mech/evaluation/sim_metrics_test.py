@@ -42,32 +42,22 @@ class SimMetricsHelperTest(parameterized.TestCase):
       dict(
           sim_fun=sim_metrics._helper_data_validator,
           data=xr.DataArray(
-              data=np.array([[[1, 2, 3, 2, 1],
-                              [1, 3, 2, 4, 1],
-                              [1, 4, 1, 1, 1]],
-                             [[10, 14, 12, 11, 10],
-                              [11, 12, 13, 14, 15],
-                              [20, 21, 22, 24, 25]]]),
-              dims=['location', 'sample', 'time'],
+              data=np.array([[1, 2, 3, 2, 1],
+                             [10, 14, 12, 11, 10]]),
+              dims=['location', 'time'],
               coords={
                   'time': pd.date_range('2000-01-01', periods=5),
                   'location': np.array(['A', 'B']),
-                  'sample': np.array([0, 1, 2])}),
+                  }),
           pred=xr.DataArray(
-              data=np.array([[[100, 101], [101, 102], [103, 104]],
-                             [[105, 106], [107, 108], [109, 110]]]),
-              dims=['location', 'sample', 'time'],
+              data=np.array([[100, 101], [105, 106]]),
+              dims=['location', 'time'],
               coords={
                   'time': pd.date_range('2000-01-04', periods=2),
                   'location': np.array(['A', 'B']),
-                  'sample': np.array([0, 1, 2])
               }),
-          expected_result=np.array([[[1, 2, 3, 100, 101],
-                                     [1, 3, 2, 101, 102],
-                                     [1, 4, 1, 103, 104]],
-                                    [[10, 14, 12, 105, 106],
-                                     [11, 12, 13, 107, 108],
-                                     [20, 21, 22, 109, 110]]])),
+          expected_result=np.array([[1, 2, 3, 100, 101],
+                                    [10, 14, 12, 105, 106]])),
       dict(
           sim_fun=sim_metrics._helper_data_validator,
           data=xr.DataArray(
@@ -139,14 +129,14 @@ class SimMetricsEvalTest(parameterized.TestCase):
       dict(
           sim_metric=sim_metrics.peak_size_error,
           data=xr.DataArray(
-              data=np.zeros((1, 50, 20)),
-              dims=['sample', 'location', 'time'],
+              data=np.zeros((50, 20)),
+              dims=['location', 'time'],
               coords={'time': np.arange(0, 20)}),
           pred=xr.DataArray(
-              data=np.ones((1, 50, 20)),
-              dims=['sample', 'location', 'time'],
+              data=np.ones((50, 20)),
+              dims=['location', 'time'],
               coords={'time': np.arange(0, 20)}),
-          expected_error=-np.ones((1, 50))),
+          expected_error=-np.ones(50)),
       dict(
           sim_metric=sim_metrics.peak_size_error,
           data=xr.DataArray(
@@ -205,14 +195,14 @@ class SimMetricsEvalTest(parameterized.TestCase):
       dict(
           sim_metric=sim_metrics.total_size_error,
           data=xr.DataArray(
-              data=np.zeros((1, 5, 20)),
-              dims=['sample', 'location', 'time'],
+              data=np.zeros((5, 20)),
+              dims=['location', 'time'],
               coords={'time': np.arange(0, 20)}),
           pred=xr.DataArray(
-              data=np.ones((1, 5, 20)),
-              dims=['sample', 'location', 'time'],
+              data=np.ones((5, 20)),
+              dims=['location', 'time'],
               coords={'time': np.arange(0, 20)}),
-          expected_error=-20 * np.ones((1, 5))),
+          expected_error=-20 * np.ones(5)),
       dict(
           sim_metric=sim_metrics.time_percent_complete_error,
           data=xr.DataArray(

@@ -123,13 +123,11 @@ def gen_social_distancing_weight(num_locations):
   return alpha
 
 
-def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
+def new_sir_simulation_model(num_locations, num_time_steps,
                              num_static_covariates, num_dynamic_covariates=0):
   """Return a zero data_model.new_model with extra simulation parameters.
 
   Args:
-    num_samples: int representing the number of unique samples to run for each
-      location
     num_locations: int representing the number of locations to model epidemics
       for
     num_time_steps: int representing the maximum number of time steps the
@@ -146,7 +144,7 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
   """
   if num_time_steps < SPLIT_TIME:
     raise ValueError('num_time_steps must be at least %d' % (SPLIT_TIME,))
-  ds = data_model.new_model(num_samples, num_locations, num_time_steps,
+  ds = data_model.new_model(num_locations, num_time_steps,
                             num_static_covariates, num_dynamic_covariates)
   ds['canonical_split_time'] = SPLIT_TIME
   ds['canonical_split_time'].attrs['description'] = (
@@ -155,14 +153,12 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
   ds['static_weights'] = data_model.new_dataarray(
       {'static_covariate': num_static_covariates})
 
-
   # TODO(edklein) should population_size be a covariate?
   ds['population_size'] = data_model.new_dataarray({'location': num_locations})
   ds['population_size'].attrs[
       'description'] = 'Int representing the population size in each location.'
 
   ds['fraction_infected'] = data_model.new_dataarray({
-      'sample': num_samples,
       'location': num_locations
   })
   ds['fraction_infected'].attrs['description'] = (
@@ -170,12 +166,10 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
       'infected at the day %d.' % (SPLIT_TIME,))
 
   ds['start_time'] = data_model.new_dataarray({
-      'sample': num_samples,
       'location': num_locations
   })
   ds['start_time'].attrs['description'] = (
-      'Int representing the infection start time at each'
-      'sample x location')
+      'Int representing the infection start time at each location')
 
   ds['recovery_rate'] = data_model.new_dataarray({'location': num_locations})
   ds['recovery_rate'].attrs[
@@ -184,8 +178,8 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
 
   if num_dynamic_covariates > 0:
     ds['dynamic_weights'] = data_model.new_dataarray(
-      {'time': num_time_steps,
-       'dynamic_covariate': num_dynamic_covariates})
+        {'time': num_time_steps,
+         'dynamic_covariate': num_dynamic_covariates})
 
     ds['growth_rate'] = data_model.new_dataarray({'location': num_locations,
                                                   'time': num_time_steps})
@@ -203,7 +197,6 @@ def new_sir_simulation_model(num_samples, num_locations, num_time_steps,
 
 
 def _helper_ground_truth_setup(population_size,
-                               num_samples,
                                num_time_steps):
   """A helper function that sets up time0 of an SIR simulation.
 
@@ -214,30 +207,26 @@ def _helper_ground_truth_setup(population_size,
   Args:
     population_size: a xr.DataArray representing the population size in each
       location
-    num_samples: an int representing the number of samples to run at each
-      location
     num_time_steps: an int representing the number of simulation 'days' to run
       at each location.
 
   Returns:
-    new_infections: a DataArray with shape (location, sample, time).
-      The infections at time 0 are initialized to 1 in all locations/samples.
-    num_susceptible: a DataArray with shape (location, sample) containing the
-      number of susceptible individuals in each location/sample at time 0.
-    num_infected: a DataArray with shape (location, sample) containing the
-      number of infected individuals (1) in each location/sample at time 0.
-    num_recovered: a DataArray with shape (location, sample) containing the
-      number of recovered individuals in each location/sample at time 0.
+    new_infections: a DataArray with shape (location, time).
+      The infections at time 0 are initialized to 1 in all locations.
+    num_susceptible: a DataArray with shape (location,) containing the
+      number of susceptible individuals in each location at time 0.
+    num_infected: a DataArray with shape (location,) containing the
+      number of infected individuals (1) in each location at time 0.
+    num_recovered: a DataArray with shape (location,) containing the
+      number of recovered individuals in each location at time 0.
   """
   num_locations = population_size.sizes['location']
 
   num_recovered = data_model.new_dataarray({
-      'sample': num_samples,
       'location': num_locations,
   }).astype(int)
 
   new_infections = data_model.new_dataarray({
-      'sample': num_samples,
       'location': num_locations,
       'time': num_time_steps
   }).astype(int)
@@ -246,7 +235,7 @@ def _helper_ground_truth_setup(population_size,
   # setup for t-0
   num_infected = new_infections.sel(time=0).copy()
 
-  num_susceptible = population_size.expand_dims({'sample': num_samples}).copy()
+  num_susceptible = population_size.copy()
   num_susceptible -= num_infected
   return new_infections, num_susceptible, num_infected, num_recovered
 
@@ -261,12 +250,12 @@ def _helper_ground_truth_loop(num_susceptible, num_recovered, num_infected,
   initial values in the next call.
 
   Args:
-    num_susceptible: a DataArray with shape (location, sample) containing the
-      number of susceptible individuals in each location/sample at time t.
-    num_infected: a DataArray with shape (location, sample) containing the
-      number of infected individuals (1) in each location/sample at time t.
-    num_recovered: a DataArray with shape (location, sample) containing the
-      number of recovered individuals in each location/sample at time t.
+    num_susceptible: a DataArray with shape (location,) containing the
+      number of susceptible individuals in each location at time t.
+    num_infected: a DataArray with shape (location,) containing the
+      number of infected individuals (1) in each location at time t.
+    num_recovered: a DataArray with shape (location,) containing the
+      number of recovered individuals in each location at time t.
     beta_time_t: a xr.DataArray representing the growth rate of the disease in
       each location at time t.
     gamma: a xr.DataArray representing the recovery rate of the disease in each
@@ -279,28 +268,30 @@ def _helper_ground_truth_loop(num_susceptible, num_recovered, num_infected,
       to less than 1., our models fit better.
 
   Returns:
-    num_new_infections: a DataArray with shape (location, sample) containing the
+    num_new_infections: a DataArray with shape (location,) containing the
       number of *new* infections that occured at thime t+1.
-    num_susceptible: a DataArray with shape (location, sample) containing the
-      number of susceptible individuals in each location/sample at time t+1.
-    num_infected: a DataArray with shape (location, sample) containing the
-      number of infected individuals (1) in each location/sample at time t+1.
-    num_recovered: a DataArray with shape (location, sample) containing the
-      number of recovered individuals in each location/sample at time t+1.
+    num_susceptible: a DataArray with shape (location,) containing the
+      number of susceptible individuals in each location at time t+1.
+    num_infected: a DataArray with shape (location,) containing the
+      number of infected individuals (1) in each location at time t+1.
+    num_recovered: a DataArray with shape (location,) containing the
+      number of recovered individuals in each location at time t+1.
   """
   # Calculate the probability that a person becomes infected
   # Python3 doesn't seem to work, so force a float
 
   frac_pop_infected = num_infected.astype(float) / population_size
-  prob_infected = prob_infection_constant*(1 - np.exp(-frac_pop_infected*beta_time_t))
+  prob_infected = prob_infection_constant * (
+      1 - np.exp(-frac_pop_infected * beta_time_t))
   # Make sure prob_infected is between 0 and 1
-  prob_infected = prob_infected.where(prob_infected>0, 0)
-  prob_infected = prob_infected.where(prob_infected<1, 1)
+  prob_infected = prob_infected.where(prob_infected > 0, 0)
+  prob_infected = prob_infected.where(prob_infected < 1, 1)
 
   # Determine the number of new infections
   # By drawing from a binomial distribution
   # Record the number of infections that occured at this time point
-  num_new_infections = stats.binom.rvs(num_susceptible.astype(int), prob_infected)
+  num_new_infections = stats.binom.rvs(
+      num_susceptible.astype(int), prob_infected)
 
   # Calculate the probability that a person recovers
   prob_recover = 1 - np.exp(-gamma)
@@ -318,7 +309,6 @@ def _helper_ground_truth_loop(num_susceptible, num_recovered, num_infected,
 def generate_ground_truth(population_size,
                           beta,
                           gamma,
-                          num_samples,
                           num_time_steps,
                           prob_infection_constant=0.2):
   """A function that generates infections over time using a discrete SIR model.
@@ -335,8 +325,6 @@ def generate_ground_truth(population_size,
       location
     gamma: a xr.DataArray representing the recovery rate of the disease in each
       location
-    num_samples: an int representing the number of samples to run at each
-      location
     num_time_steps: an int representing the number of simulation 'days' to run
       at each location.
     prob_infection_constant: a float representing a constant that we multiply
@@ -346,11 +334,11 @@ def generate_ground_truth(population_size,
 
   Returns:
     new_infections: a xr.DataArray representing the new_infections at each
-      (sample, location, time).
+      (location, time).
   """
 
   new_infections, num_susceptible, num_infected, num_recovered = _helper_ground_truth_setup(
-      population_size, num_samples, num_time_steps)
+      population_size, num_time_steps)
 
   if 'time' not in beta.dims:
     beta = beta.expand_dims({'time': new_infections.sizes['time']})
@@ -368,7 +356,6 @@ def generate_ground_truth(population_size,
 def generate_social_distancing_ground_truth(population_size,
                                             beta,
                                             gamma,
-                                            num_samples,
                                             num_time_steps,
                                             social_distancing_threshold,
                                             gen_social_distancing_weight_fn,
@@ -387,11 +374,9 @@ def generate_social_distancing_ground_truth(population_size,
   Args:
     population_size: a xr.DataArray representing the population size in each
       location
-    beta: a xr.DataArray representing the static growth rate of the disease in each
-      location
+    beta: a xr.DataArray representing the static growth rate of the disease in
+      each location
     gamma: a xr.DataArray representing the recovery rate of the disease in each
-      location
-    num_samples: an int representing the number of samples to run at each
       location
     num_time_steps: an int representing the number of simulation 'days' to run
       at each location.
@@ -408,18 +393,18 @@ def generate_social_distancing_ground_truth(population_size,
 
   Returns:
     beta_td: a xr.DataArray representing the time-dependent growth rate at each
-      (sample, location, time).
+      (location, time).
     dynamic_covariate: a xr.DataArray representing the time-dependent covariate
-      at each (sample, location, time). Currently fixed to be one covariate with
+      at each (location, time). Currently fixed to be one covariate with
       a value of either 0 or 1.
     dynamic_weights: a xr.DataArray representing the weight of dynamic_covariate
       currently a 1d array with dimension ['dynamic_covariate'].
     new_infections: a xr.DataArray representing the new_infections at each
-      (sample, location, time).
+      (location, time).
   """
 
   new_infections, num_susceptible, num_infected, num_recovered = _helper_ground_truth_setup(
-      population_size, num_samples, num_time_steps)
+      population_size, num_time_steps)
   num_locations = population_size.sizes['location']
 
   # need to compute the change in growth rate at a given
@@ -431,7 +416,6 @@ def generate_social_distancing_ground_truth(population_size,
   dynamic_alpha = gen_social_distancing_weight_fn(num_locations)
   dynamic_weights = xr.DataArray(dynamic_alpha, dims=['dynamic_covariate'])
 
-  beta = beta.expand_dims({'sample': num_samples})
   beta_td = beta.copy()
 
   if 'time' not in beta_td.dims:
@@ -463,12 +447,11 @@ def generate_social_distancing_ground_truth(population_size,
 
 
 def _helper_setup_sir_sim(gen_constant_beta_fn,
-                         num_samples,
-                         num_locations,
-                         num_time_steps=500,
-                         constant_gamma=0.33,
-                         population_size=10000,
-                         gen_dynamic_beta_fn=None):
+                          num_locations,
+                          num_time_steps=500,
+                          constant_gamma=0.33,
+                          population_size=10000,
+                          gen_dynamic_beta_fn=None):
   """Helper function to set up and store a bunch of variables in a xr.DataSet.
 
   Returns a xr.Dataset containing the growth rate, covariates, weights,
@@ -477,9 +460,7 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
   Args:
     gen_constant_beta_fn: a partial function to generate the constant beta
       values for each epidemic when passed num_locations.
-    num_samples: an int representing the number of samples to run
-    num_locations: an int representing the number of locations to run in each
-      sample
+    num_locations: an int representing the number of locations to run
     num_time_steps: an int representing the number of simulation 'days'
       (default 500)
     constant_gamma: a float representing the constant recovery rate (default
@@ -494,8 +475,7 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
     trajectories: a xr.Dataset containing the growth rate, covariates, weights,
       population size, and recovery rate.
   """
-  # generate growth rate for all samples,
-  # this is constant between samples
+  # generate growth rate for all locations
   beta, v, alpha = gen_constant_beta_fn(num_locations)
 
   if type(population_size) is int:
@@ -515,7 +495,7 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
   else:
     num_dynamic_covariates=0
 
-  trajectories = new_sir_simulation_model(num_samples, num_locations,
+  trajectories = new_sir_simulation_model(num_locations,
                                           num_time_steps, num_static_covariates,
                                           num_dynamic_covariates)
 
@@ -534,7 +514,6 @@ def _helper_setup_sir_sim(gen_constant_beta_fn,
 
 
 def generate_simulations(gen_constant_beta_fn,
-                         num_samples,
                          num_locations,
                          num_time_steps=500,
                          constant_gamma=0.33,
@@ -542,19 +521,15 @@ def generate_simulations(gen_constant_beta_fn,
                          gen_dynamic_beta_fn=None,
                          fraction_infected_limits=(.05, 1.),
                          prob_infection_constant=0.2):
-  """Generate many samples of SIR curves.
+  """Generate many SIR curves.
 
-  Generate many SIR curves. Each sample contains num_locations.
-  The locations may have different covariates, and thus different trajectories.
-  However between samples the covariates are the same,
-  so the only difference is statistical.
+  Generate infection curves for num_locations. The locations may have different
+  covariates, and thus different trajectories.
 
   Args:
     gen_constant_beta_fn: a partial function to generate the constant beta
       values for each epidemic when passed num_locations.
-    num_samples: an int representing the number of samples to run
-    num_locations: an int representing the number of locations to run in each
-      sample
+    num_locations: an int representing the number of locations to run
     num_time_steps: an int representing the number of simulation 'days'
       (default 500)
     constant_gamma: a float representing the constant recovery rate (default
@@ -575,7 +550,6 @@ def generate_simulations(gen_constant_beta_fn,
     trajectories: a xr.Dataset of the simulated infections over time
   """
   trajectories = _helper_setup_sir_sim(gen_constant_beta_fn,
-                                       num_samples,
                                        num_locations,
                                        num_time_steps,
                                        constant_gamma,
@@ -587,7 +561,7 @@ def generate_simulations(gen_constant_beta_fn,
   # fraction_infected being infected at SPLIT_TIME.
   trajectories['new_infections'] = generate_ground_truth(
       trajectories.population_size, trajectories.growth_rate,
-      trajectories.recovery_rate, trajectories.sizes['sample'],
+      trajectories.recovery_rate,
       trajectories.sizes['time'], prob_infection_constant)
 
   return data_model.shift_timeseries(trajectories, fraction_infected_limits, SPLIT_TIME)
@@ -595,7 +569,6 @@ def generate_simulations(gen_constant_beta_fn,
 
 def generate_social_distancing_simulations(gen_constant_beta_fn,
                                            gen_social_distancing_weight_fn,
-                                           num_samples,
                                            num_locations,
                                            num_time_steps=500,
                                            constant_gamma=0.33,
@@ -604,13 +577,11 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
                                            fraction_infected_limits=(.05, 1.),
                                            prob_infection_constant=0.2,
                                            shift_timeseries=True):
-  """Generate many samples of SIR curves with social distancing.
+  """Generate many SIR curves with social distancing.
 
   Generate many SIR curves with social distancing implemented when the number of
-  cumulative infections reaches fraction_infected_limits. Each sample contains
-  num_locations. The locations may have different covariates, and thus different
-  trajectories. However between samples the covariates are the same,
-  so the only difference is statistical.
+  cumulative infections reaches fraction_infected_limits. The locations may have
+  different covariates, and thus different trajectories.
 
   Args:
     gen_constant_beta_fn: a partial function to generate the constant beta
@@ -618,9 +589,7 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
     gen_social_distancing_weight_fn: A (partial) function that generates the
       weights of the social distancing covariate. Function is called with the
       argument num_locations.
-    num_samples: an int representing the number of samples to run
-    num_locations: an int representing the number of locations to run in each
-      sample
+    num_locations: an int representing the number of locations to run
     num_time_steps: an int representing the number of simulation 'days'
       (default 500)
     constant_gamma: a float representing the constant recovery rate (default
@@ -642,10 +611,8 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
   Returns:
     trajectories: a xr.Dataset of the simulated infections over time
   """
-  # generate growth rate for all samples,
-  # this is constant between samples
+  # generate growth rate for all locations
   trajectories = _helper_setup_sir_sim(gen_constant_beta_fn,
-                                       num_samples,
                                        num_locations,
                                        num_time_steps,
                                        constant_gamma,
@@ -654,7 +621,7 @@ def generate_social_distancing_simulations(gen_constant_beta_fn,
 
   beta, dynamic_covariates, dynamic_weights, new_infections = generate_social_distancing_ground_truth(
       trajectories.population_size, trajectories.growth_rate,
-      trajectories.recovery_rate, trajectories.sizes['sample'],
+      trajectories.recovery_rate,
       trajectories.sizes['time'], social_distancing_threshold,
       gen_social_distancing_weight_fn, prob_infection_constant)
 

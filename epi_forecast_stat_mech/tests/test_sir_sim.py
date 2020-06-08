@@ -11,7 +11,6 @@ class TestGenerateSirSimulations(absltest.TestCase):
 
   def setUp(self):
     super(TestGenerateSirSimulations, self).setUp()
-    self.num_simulations = 1
     self.num_epidemics = 50
     self.num_important_cov = 1
     self.num_unimportant_cov = 2
@@ -23,11 +22,9 @@ class TestGenerateSirSimulations(absltest.TestCase):
                                 num_not_pred=self.num_unimportant_cov)
     trajectories = sir_sim.generate_simulations(
         beta_fn,
-        self.num_simulations,
         self.num_epidemics,
         self.num_time_steps)
-    assert trajectories.new_infections.shape == (self.num_simulations,
-                                                 self.num_epidemics,
+    assert trajectories.new_infections.shape == (self.num_epidemics,
                                                  self.num_time_steps)
 
   def test_small_time_steps(self):
@@ -37,7 +34,6 @@ class TestGenerateSirSimulations(absltest.TestCase):
                                   num_not_pred=self.num_unimportant_cov)
       trajectories = sir_sim.generate_simulations(
           beta_fn,
-          self.num_simulations,
           self.num_epidemics,
           num_time_steps=20)
 
@@ -49,14 +45,13 @@ class TestGenerateSirSimulations(absltest.TestCase):
     dynamic_beta_fn = sir_sim.gen_dynamic_beta_random_time
     trajectories = sir_sim.generate_simulations(
         static_beta_fn,
-        self.num_simulations,
         self.num_epidemics,
         self.num_time_steps,
         gen_dynamic_beta_fn=dynamic_beta_fn)
 
     shift_growth_rate = trajectories.growth_rate.shift(time=1)
-    num_diff_betas = (trajectories.growth_rate[:, :-1] !=
-                      shift_growth_rate[:, 1:]).sum()
+    num_diff_betas = (trajectories.growth_rate.sel(time=slice(None, self.num_time_steps-1)) !=
+                      shift_growth_rate.sel(time=slice(1, None))).sum()
     assert num_diff_betas == self.num_epidemics
 
   def test_social_distancing_sanity(self):
@@ -66,11 +61,9 @@ class TestGenerateSirSimulations(absltest.TestCase):
     trajectories = sir_sim.generate_social_distancing_simulations(
         beta_fn,
         sir_sim.gen_social_distancing_weight,
-        self.num_simulations,
         self.num_epidemics,
         self.num_time_steps)
-    assert trajectories.new_infections.shape == (self.num_simulations,
-                                                 self.num_epidemics,
+    assert trajectories.new_infections.shape == (self.num_epidemics,
                                                  self.num_time_steps)
 
   def test_population_size(self):
@@ -84,7 +77,6 @@ class TestGenerateSirSimulations(absltest.TestCase):
     trajectories = sir_sim.generate_social_distancing_simulations(
         beta_fn,
         sir_sim.gen_social_distancing_weight,
-        self.num_simulations,
         self.num_epidemics,
         self.num_time_steps,
         population_size=population_size)

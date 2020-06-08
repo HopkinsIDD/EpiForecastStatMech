@@ -35,15 +35,12 @@ def final_size_poisson_dist(num_locations):
   return final_sizes, v, alpha
 
 
-def new_vc_simulation_model(num_samples,
-                            num_locations,
+def new_vc_simulation_model(num_locations,
                             num_time_steps,
                             num_static_covariates=1):
   """Return a zero data_model.new_model with extra simulation parameters.
 
   Args:
-    num_samples: int representing the number of unique samples to run for each
-      location
     num_locations: int representing the number of locations to model epidemics
       for
     num_time_steps: int representing the maximum number of time steps the
@@ -58,7 +55,7 @@ def new_vc_simulation_model(num_samples,
   """
   if num_time_steps < SPLIT_TIME:
     raise ValueError('num_time_steps must be at least %d' % (SPLIT_TIME,))
-  ds = data_model.new_model(num_samples, num_locations, num_time_steps,
+  ds = data_model.new_model(num_locations, num_time_steps,
                             num_static_covariates)
   ds['canonical_split_time'] = SPLIT_TIME
   ds['canonical_split_time'].attrs['description'] = (
@@ -77,7 +74,7 @@ def new_vc_simulation_model(num_samples,
   return ds
 
 
-def generate_ground_truth(pred_size, r, p, num_samples, num_time_steps):
+def generate_ground_truth(pred_size, r, p, num_time_steps):
   """Generate the epidemic curve observed to date using the VC model.
 
   Assume we start with 1 infected individual, and a disease progression
@@ -89,19 +86,16 @@ def generate_ground_truth(pred_size, r, p, num_samples, num_time_steps):
       location
     p: a xr.DataArray representing the extent that the growth rate is super or
       sub exponential in each location
-    num_samples: an int representing the number of samples to run at each
-      location
     num_time_steps: an int representing the number of simulation 'days' to run
       at each location.
 
   Returns:
     new_infections: a xr.DataArray representing the new_infections at each
-      (sample, location, time).
+      (location, time).
   """
   num_locations = r.sizes['location']
 
   new_infections = data_model.new_dataarray({
-      'sample': num_samples,
       'location': num_locations,
       'time': num_time_steps
   }).astype(int)
@@ -127,24 +121,19 @@ def generate_ground_truth(pred_size, r, p, num_samples, num_time_steps):
 
 
 def generate_simulations(final_size_fn,
-                         num_samples,
                          num_locations,
                          num_time_steps=500,
                          constant_r=1.0,
                          constant_p=0.6,
                          fraction_infected_limits=(0.05, 1.0),
                          shift_timeseries=True):
-  """Generate many samples of VC curves.
+  """Generate many VC curves.
 
-  Generate many VC curves. Each sample contains num_locations.
   The locations may have different covariates, and thus different trajectories.
-  However between samples the covariates are the same, so the only difference
-  is statistical.
 
   Args:
     final_size_fn: a partialfunction to generate the predicted final size of the
       epidemic when passed the number of locations.
-    num_samples: an int representing the number of simulations to run
     num_locations: an int representing the number of epidemics to run in each
       simulation
     num_time_steps: an int representing the number of simulation 'days' (default
@@ -167,7 +156,7 @@ def generate_simulations(final_size_fn,
 
   num_static_covariates = v.shape[1]
 
-  trajectories = new_vc_simulation_model(num_samples, num_locations,
+  trajectories = new_vc_simulation_model(num_locations,
                                          num_time_steps, num_static_covariates)
   trajectories['final_size'] = xr.DataArray(final_sizes, dims='location')
   trajectories['static_weights'] = xr.DataArray(
@@ -178,18 +167,17 @@ def generate_simulations(final_size_fn,
   trajectories['growth_rate'].data = constant_r * np.ones(num_locations)
   trajectories['growth_rate_exp'].data = constant_p * np.ones(num_locations)
 
-  # Randomly generate the fraction of infected people for each
-  # sample and location.
+  # Randomly generate the fraction of infected people for each location.
   trajectories['fraction_infected'] = xr.DataArray(np.random.uniform(
       fraction_infected_limits[0], fraction_infected_limits[1],
-      (num_samples, num_locations)), dims=['sample', 'location'])
+      num_locations), dims=['location'])
   # Initially, all trajectories start at time 0.
   # The actual start_time will be updated to be consistent with
   # fraction_infected being infected at SPLIT_TIME.
   dummy_start_time = np.zeros((num_locations,), dtype=np.int32)
   trajectories['new_infections'] = generate_ground_truth(
       trajectories.final_size, trajectories.growth_rate,
-      trajectories.growth_rate_exp, trajectories.sizes['sample'],
+      trajectories.growth_rate_exp,
       trajectories.sizes['time'])
 
   if not shift_timeseries:

@@ -133,8 +133,7 @@ class MechanisticModelsTest(parameterized.TestCase):
     beta_fn = functools.partial(
         sir_sim.generate_betas_many_cov2, num_pred=3, num_not_pred=7)
     data = sir_sim.generate_social_distancing_simulations(
-        beta_fn, sir_sim.gen_social_distancing_weight, 1, 25, 200)
-    data = data.squeeze('sample')
+        beta_fn, sir_sim.gen_social_distancing_weight, 25, 200)
     data = data.sel(
         time=((data.new_infections.sum('location') >= 1).cumsum('time') >= 1))
     data = data.sel(location=(data.new_infections.sum('time') >= 100))

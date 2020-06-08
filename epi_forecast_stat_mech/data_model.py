@@ -13,7 +13,7 @@ import numpy as np
 import re
 import xarray as xr
 
-valid_dimensions = ['sample', 'location', 'time', 'static_covariate',
+valid_dimensions = ['location', 'time', 'static_covariate',
                     'dynamic_covariate', 'model']
 
 
@@ -47,13 +47,11 @@ def new_dataarray(parameters):
   return da
 
 
-def new_model(num_samples, num_locations, num_time_steps,
+def new_model(num_locations, num_time_steps,
               num_static_covariates, num_dynamic_covariates=0):
   """Return a xr.Dataset with an infection time series and a list of covariates.
 
   Args:
-    num_samples: int representing the number of unique samples to run for each
-      location
     num_locations: int representing the number of locations to model epidemics
       for
     num_time_steps: int representing the maximum number of time steps the
@@ -68,7 +66,6 @@ def new_model(num_samples, num_locations, num_time_steps,
       covariates for each location.
   """
   new_infections = new_dataarray({
-      'sample': num_samples,
       'location': num_locations,
       'time': num_time_steps,
   })
@@ -122,13 +119,12 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   """
   trajectories = data.copy()
 
-  num_samples = len(trajectories.sample.values)
   num_locations = len(trajectories.location.values)
   # Randomly generate the fraction of infected people for each
-  # sample and location.
+  # location.
   trajectories['fraction_infected'].data = np.random.uniform(
       fraction_infected_limits[0], fraction_infected_limits[1],
-      (num_samples, num_locations))
+      num_locations)
   cases = trajectories.new_infections.cumsum('time')
   trajectories['final_size'] = cases.isel(time=-1)
   target_cases = (trajectories['fraction_infected'] *
@@ -141,18 +137,11 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   shifts = np.where(shifts_all > 0, shifts_all, 0)
 
   # TODO(edklein) make this its own function
-  shift_dataarray = xr.DataArray(shifts, dims=['samples', 'location'])
+  shift_dataarray = xr.DataArray(shifts, dims=['location'])
   old_ni = trajectories.new_infections
-  shifted_new_infections = xr.concat([
-      xr.concat([
-          old_ni.isel(sample=j, location=k).shift(
-              time=shifts[j, k], fill_value=0)
-          for k in range(old_ni.sizes['location'])
-      ],
-                dim='location')
-      for j in range(old_ni.sizes['sample'])
-  ],
-                                     dim='sample')
+  shifted_new_infections = xr.concat([old_ni.isel(location=k).shift(
+      time=shifts[k], fill_value=0)
+      for k in range(old_ni.sizes['location'])], dim='location')
   trajectories['new_infections'] = shifted_new_infections
   trajectories['start_time'] = shift_dataarray
   return trajectories
@@ -165,6 +154,7 @@ def validate_data(data,
                   require_no_samples=False):
   """Check the validity of the data xarray."""
   # TODO(mcoram): Consider validating data that has a model dim.
+  # TODO(edklein): Consider removing require_samples.
   if require_samples and require_no_samples:
     raise ValueError('invalid call: only require one of samples or no_samples.')
   if not isinstance(data, xr.Dataset):
@@ -255,25 +245,25 @@ def calculate_cumulative_infections(new_infections):
 
   Args:
     new_infections: a xr.DataArray containing new_infections and dimension
-      (samples, locations, time)
+      (locations, time)
 
   Returns:
     cumulative_infections: a xr.DataArray containing the cumulative infections
-    of dimension (samples, locations, time)
+    of dimension (locations, time)
   """
   return new_infections.cumsum('time')
 
 
 def calculate_total_infections(new_infections):
-  """Calculate the total infections at each location and sample.
+  """Calculate the total infections at each location.
 
   Args:
     new_infections: a xr.DataArray containing new_infections and dimension
-      (samples, locations, time)
+      (locations, time)
 
   Returns:
     total_infections: a xr.DataArray containing the summed infections of
-    dimension (samples, locations)
+    dimension (locations)
   """
 
   return new_infections.sum('time')

@@ -18,10 +18,9 @@ class TestHighLevelSparseEstimator(absltest.TestCase):
   def test_SparseEstimator(self):
     """Verify we can fit and predict from SparseEstimator."""
     prediction_length = 10
-    num_samples = 11
+    num_samples = 11 # number of 'roll out' samples.
 
-    data = test_high_level.create_synthetic_dataset(
-        num_epidemics=50, num_time_steps=100)
+    data = test_high_level.create_synthetic_dataset(num_time_steps=100)
     # These arguments are chosen to make the test faster.
     estimator = sparse_estimator.SparseEstimator(
         initializer=sparse.predefined_constant_initializer,

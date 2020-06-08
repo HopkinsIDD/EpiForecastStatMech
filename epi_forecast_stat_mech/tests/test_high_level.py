@@ -30,12 +30,12 @@ def create_synthetic_dataset(
   beta_fn = functools.partial(sir_sim.generate_betas_many_cov2,
                               num_pred=num_important_cov,
                               num_not_pred=num_unimportant_cov)
-  num_simulations = 1
+
   trajectories = sir_sim.generate_simulations(
       beta_fn,
-      num_simulations, num_epidemics,
+      num_epidemics,
       num_time_steps=num_time_steps)
-  trajectories = trajectories.squeeze('sample')
+
   return trajectories
 
 
@@ -53,9 +53,8 @@ def create_synthetic_dynamic_dataset(
       num_pred=num_important_cov,
       num_not_pred=num_unimportant_cov)
   data = sir_sim.generate_social_distancing_simulations(
-      beta_fn, sir_sim.gen_social_distancing_weight, 1, num_epidemics,
+      beta_fn, sir_sim.gen_social_distancing_weight, num_epidemics,
       num_time_steps)
-  data = data.squeeze('sample')
   data = data.sel(
       time=((data.new_infections.sum('location') >= 1).cumsum('time') >= 1))
   data = data.sel(location=(data.new_infections.sum('time') >= 100))
@@ -68,9 +67,9 @@ class TestHighLevelStatMech(absltest.TestCase):
   def test_StatMechEstimator(self):
     """Verify we can fit and predict from StatMechEstimator."""
     prediction_length = 10
-    num_samples = 11
+    num_samples = 11 # number of 'roll out' samples.
 
-    data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
+    data = create_synthetic_dataset(num_time_steps=100)
     estimator = high_level.StatMechEstimator(train_steps=1000).fit(data)
 
     _ = estimator.mech_params.to_netcdf()
@@ -87,9 +86,9 @@ class TestHighLevelRtLive(absltest.TestCase):
   def test_RtLiveEstimator(self):
     """Verify we can fit and predict from RtLiveEstimator."""
     prediction_length = 10
-    num_samples = 11
+    num_samples = 11 # number of 'roll out' samples.
 
-    data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
+    data = create_synthetic_dataset(num_time_steps=100)
     estimator = high_level.RtLiveEstimator(gamma=1.0).fit(data)
 
     predictions = estimator.predict(prediction_length, num_samples)
@@ -122,9 +121,9 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
       estimator_name: a key into high_level.get_estimator_dict().
     """
     prediction_length = 10
-    num_samples = 11
+    num_samples = 11 # number of 'roll out' samples.
 
-    data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
+    data = create_synthetic_dataset(num_time_steps=100)
     estimator = high_level.get_estimator_dict()[estimator_name]
     estimator.fit(data)
 
