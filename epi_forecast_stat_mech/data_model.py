@@ -8,7 +8,7 @@ secondary quantities and store them in the DataSeries.
 """
 from .constants import coord_units
 from .constants import coordinates
-
+from absl import logging
 import numpy as np
 import re
 import xarray as xr
@@ -138,6 +138,16 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
 
   # TODO(edklein) make this its own function
   shift_dataarray = xr.DataArray(shifts, dims=['location'])
+
+  # Count the number of trajectories we don't shift,
+  # raise a warning if we exceed 1/4 of all trajectories
+  num_traj_not_shifted = xr.where(shift_dataarray == 0, 1,
+                                  0).sum(['location'])
+  if num_traj_not_shifted > (len(trajectories.location) / 4):
+    logging.warning('More than 1/4 of the trajectories were not shifted in time'
+                    ' in %d locations. Consider changing '
+                    'SPLIT_TIME.', (num_traj_not_shifted.values))
+
   old_ni = trajectories.new_infections
   shifted_new_infections = xr.concat([old_ni.isel(location=k).shift(
       time=shifts[k], fill_value=0)
