@@ -101,7 +101,7 @@ class RtLiveEstimator(estimator_base.Estimator):
     return pd.DataFrame(posterior, index=self.r_t_range, columns=sr.columns)
 
   def fit(self, observations: xr.Dataset):
-    data_model.validate_data(observations, require_no_samples=True)
+    data_model.validate_data_for_fit(observations)
     sr = observations['new_infections'].to_pandas().T
     sr = self._prepare_cases(sr)
     self.posterior = self._get_posterior(sr)

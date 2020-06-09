@@ -91,8 +91,7 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
 
   def fit(self, data):
     mech_model_class = self.mech_model_class
-    data_model.validate_data(
-        data, require_no_samples=True, require_dynamics=True)
+    data_model.validate_data_for_fit(data, require_dynamics=True)
     self.data = data
     # Theoretically there should be an instance per location (in the mech_param_stack)
     # or I should re-design the class to be "stateless" i.e. this is a method,

@@ -96,7 +96,7 @@ class IterativeEstimator(estimator_base.Estimator):
     return jnp.reshape(x, (-1, self.out_dim))
 
   def fit(self, data):
-    data_model.validate_data(data, require_no_samples=True)
+    data_model.validate_data_for_fit(data)
     self.data = data
     num_locations = data.sizes['location']
     self.epidemics = epidemics = mechanistic_models.pack_epidemics_record_tuple(

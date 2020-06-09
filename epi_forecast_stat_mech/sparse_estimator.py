@@ -98,7 +98,7 @@ class SparseEstimator(estimator_base.Estimator):
 
   def fit(self,
           data):
-    data_model.validate_data(data, require_no_samples=True)
+    data_model.validate_data_for_fit(data)
     self.data = data
     intensity_family = self.intensity_family
     initializer = self.initializer

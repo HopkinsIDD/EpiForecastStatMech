@@ -102,7 +102,7 @@ class StatMechEstimator(estimator_base.Estimator):
     train_steps = self.train_steps
     time_mask_value = self.time_mask_value
     seed = self.fit_seed
-    data_model.validate_data(data, require_no_samples=True)
+    data_model.validate_data_for_fit(data)
     # TODO(dkochkov) consider a tunable module for preprocessing.
     data["total"] = (
         ("location", "time",), np.cumsum(

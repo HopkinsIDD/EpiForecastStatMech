@@ -121,6 +121,7 @@ class TestValidateData(absltest.TestCase):
     self.data = data_model.new_model(self.num_locations,
                                      self.num_time_steps,
                                      self.num_static_covariates)
+    data_model.set_sensible_canonical_split_time(self.data)
 
   def test_validate_ok(self):
     data_model.validate_data(self.data)

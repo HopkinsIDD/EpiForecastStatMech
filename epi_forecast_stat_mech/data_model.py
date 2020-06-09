@@ -185,7 +185,9 @@ def validate_data(data,
                   enable_regex_check=False,
                   require_dynamics=False,
                   require_samples=False,
-                  require_no_samples=False):
+                  require_no_samples=False,
+                  require_integer_time=True,
+                  require_canonical_split_time=True):
   """Check the validity of the data xarray."""
   # TODO(mcoram): Consider validating data that has a model dim.
   # TODO(edklein): Consider removing require_samples.
@@ -193,16 +195,22 @@ def validate_data(data,
     raise ValueError('invalid call: only require one of samples or no_samples.')
   if not isinstance(data, xr.Dataset):
     raise ValueError('data must be an xarray')
+
   # Check for required data_vars.
   required_data_vars_set = set(['new_infections', 'static_covariates'])
   if require_dynamics:
-    required_data_vars_set = required_data_vars_set.union(
-        set(['dynamic_covariates']))
+    required_data_vars_set.add('dynamic_covariates')
+  if require_canonical_split_time:
+    required_data_vars_set.add('canonical_split_time')
   data_vars_set = set(data.data_vars.keys())
   missing_data_vars = required_data_vars_set.difference(data_vars_set)
-  if missing_data_vars != set():
-    raise ValueError('data is missing required data_vars: %s' %
-                     (missing_data_vars,))
+  if missing_data_vars:
+    helper_strs = []
+    if 'canonical_split_time' in missing_data_vars:
+      helper_strs.append('To add a sensible default canonical_split_time, run '
+                         'data_model.set_canonical_split_time on your data.')
+    raise ValueError('data is missing required data_vars: %s\n%s' %
+                     (missing_data_vars, '\n'.join(helper_strs)))
 
   required_dims_set = set(['location', 'time', 'static_covariate'])
   if require_samples:
@@ -243,6 +251,11 @@ def validate_data(data,
   missing_dims = required_dims_set.difference(data_dims_set)
   if missing_dims != set():
     raise ValueError('data is missing required dims: %s' % (missing_dims,))
+
+  if require_integer_time and not np.issubdtype(data.time.dtype, np.integer):
+    raise ValueError('`data.time` is required to be integer. Please run '
+                     'data_model.convert_data_to_integer_time on this data.')
+
   # Make requirements about null patterns.
   static_covariates_null = data.static_covariates.transpose(
       'location', 'static_covariate').isnull()
@@ -272,6 +285,14 @@ def validate_data(data,
   bad_new_infections = new_infections < 0
   if bad_new_infections.sum().item() > 0:
     raise ValueError('data.new_infections contains negative entries.')
+
+
+def validate_data_for_fit(data, **kwargs):
+  validate_data(
+      data,
+      require_no_samples=True,
+      require_canonical_split_time=False,
+      **kwargs)
 
 
 def calculate_cumulative_infections(new_infections):
@@ -374,3 +395,10 @@ def convert_data_to_integer_time(trajectories, use_numpy_index_time=False):
     idx = np.searchsorted(trajectories['original_time'], orig_split_time)
     trajectories['canonical_split_time'] = trajectories['time'][idx]
   return trajectories
+
+
+def set_sensible_canonical_split_time(data):
+  peak_idx = data['new_infections'].argmax('time', skipna=True)
+  peak_time = data.time[peak_idx].drop('time')
+  peak_times = np.sort(peak_time.values.ravel())
+  data['canonical_split_time'] = peak_times[len(peak_times) // 2]
