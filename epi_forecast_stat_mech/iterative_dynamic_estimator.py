@@ -79,12 +79,14 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
       stat_estimators = collections.defaultdict(
           lambda: sklearn.ensemble.RandomForestRegressor(n_estimators=50))
     self.stat_estimators = stat_estimators
+    if mech_model_class is None:
+      raise ValueError('mech_model_class is required.')
+    self.mech_model_class = mech_model_class
     self.hat_interpolation_alpha = hat_interpolation_alpha
     self.iter_max = iter_max
     self.gradient_steps = gradient_steps
     self.learning_rate = learning_rate
     self.verbose = verbose
-    self.mech_model_class = mech_model_class
 
   def _unflatten(self, x):
     return jnp.reshape(x, (-1, self.out_dim))
@@ -358,4 +360,9 @@ def get_estimator_dict():
       'iterative_mean__DynamicMultiplicative'] = IterativeDynamicEstimator(
           mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
           stat_estimators=make_mean_estimators(), iter_max=20)
+  estimator_dict['iterative_randomforest__DynamicMultiplicative'] = (
+      IterativeDynamicEstimator(
+          mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
+          stat_estimators=None,
+          iter_max=20))
   return estimator_dict

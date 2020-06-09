@@ -137,8 +137,7 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
 
   @parameterized.parameters(
       dict(estimator_name='iterative_mean__DynamicMultiplicative'),
-      # The second copy should eventually become distinct.
-      dict(estimator_name='iterative_mean__DynamicMultiplicative'),
+      dict(estimator_name='iterative_randomforest__DynamicMultiplicative'),
   )
   def test_DynamicEstimatorDictEstimator(self, estimator_name):
     """Verify we can fit and predict from the named estimator.
