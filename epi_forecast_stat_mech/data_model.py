@@ -157,9 +157,15 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   num_locations = len(trajectories.location.values)
   # Randomly generate the fraction of infected people for each
   # location.
-  trajectories['fraction_infected'].data = np.random.uniform(
-      fraction_infected_limits[0], fraction_infected_limits[1],
-      num_locations)
+  if 'fraction_infected' in trajectories.data_vars:
+    trajectories['fraction_infected'].data = np.random.uniform(
+        fraction_infected_limits[0], fraction_infected_limits[1],
+        num_locations)
+  else:
+    trajectories['fraction_infected'] = xr.DataArray(np.random.uniform(
+        fraction_infected_limits[0], fraction_infected_limits[1],
+        num_locations), dims=['location'])
+
   cases = trajectories.new_infections.cumsum('time')
   trajectories['final_size'] = cases.isel(time=-1)
   target_cases = (trajectories['fraction_infected'] *
