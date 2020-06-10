@@ -121,7 +121,7 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
       estimator_name: a key into high_level.get_estimator_dict().
     """
     prediction_length = 10
-    num_samples = 11 # number of 'roll out' samples.
+    num_samples = 11  # number of 'roll out' samples.
 
     data = create_synthetic_dataset(num_time_steps=100)
     estimator = high_level.get_estimator_dict()[estimator_name]
@@ -129,6 +129,34 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
 
     _ = estimator.mech_params.to_netcdf()
     _ = estimator.mech_params_hat.to_netcdf()
+    predictions = estimator.predict(prediction_length, num_samples)
+    self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
+    self.assertLen(predictions.time, prediction_length)
+    np.testing.assert_array_equal(data.location, predictions.location)
+    self.assertLen(predictions.sample, num_samples)
+
+  @parameterized.parameters(
+      dict(estimator_name='None_VC_Linear'),
+      dict(estimator_name='Laplace_Gaussian_PL_Linear'),
+  )
+  def test_EstimatorDictEstimatorWithCoef(self, estimator_name):
+    """Verify we can fit and predict from the named estimator.
+
+    This test requires mech_params as well as alpha and intercept.
+
+    Args:
+      estimator_name: a key into high_level.get_estimator_dict().
+    """
+    prediction_length = 10
+    num_samples = 11  # number of 'roll out' samples.
+
+    data = create_synthetic_dataset(num_time_steps=100)
+    estimator = high_level.get_estimator_dict()[estimator_name]
+    estimator.fit(data)
+
+    _ = estimator.alpha.to_netcdf()
+    _ = estimator.intercept.to_netcdf()
+    _ = estimator.mech_params.to_netcdf()
     predictions = estimator.predict(prediction_length, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
     self.assertLen(predictions.time, prediction_length)

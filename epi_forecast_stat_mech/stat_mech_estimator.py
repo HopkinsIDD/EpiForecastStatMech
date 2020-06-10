@@ -194,6 +194,8 @@ class StatMechEstimator(estimator_base.Estimator):
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
                                                  self.params_[1])
 
+  # TODO(mcoram): Implement mech_params_hat.
+
   @property
   def alpha(self):
     if issubclass(self.stat_model.predict_module, network_models.LinearModule):
@@ -223,6 +225,21 @@ class StatMechEstimator(estimator_base.Estimator):
       raise AttributeError("no alpha method for stat_model: %s" %
                            (self.stat_model.__class__,))
 
+  @property
+  def intercept(self):
+    if issubclass(self.stat_model.predict_module, network_models.LinearModule):
+      # see comments in alpha(self).
+      bias = self.params_[0]["Dense_0"]["bias"]
+      assert bias.shape == (2,), "unexpected bias shape."
+      bias = xarray.DataArray(
+          np.asarray(bias[:1]),
+          dims=("encoded_param"),
+          coords=dict(
+              encoded_param=["log_K"]))
+      return bias
+    else:
+      raise AttributeError("no intercept method for stat_model: %s" %
+                           (self.stat_model.__class__,))
 
 def laplace_prior(parameters, scale_parameter=1.):
   return jax.tree_map(
