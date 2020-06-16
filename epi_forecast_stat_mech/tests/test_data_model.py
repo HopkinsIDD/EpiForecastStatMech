@@ -27,7 +27,6 @@ class TestNewDataArray(absltest.TestCase):
     assert trajectories.data.shape[0] == self.num_static_covariates
     np.testing.assert_array_equal(trajectories.data, new_covariates)
 
-
 class TestNewModel(absltest.TestCase):
 
   def setUp(self):
@@ -109,6 +108,7 @@ class TestShiftData(absltest.TestCase):
     expected_num_shifts = 2*self.num_locations
     expected_sum = self.num_locations*self.num_time_steps - expected_num_shifts
     assert expected_sum == shifted_data.sum()
+
 
 
 class TestValidateData(absltest.TestCase):

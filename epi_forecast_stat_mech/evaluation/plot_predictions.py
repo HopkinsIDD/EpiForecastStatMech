@@ -122,8 +122,8 @@ def plot_ground_truth_data(data_inf, predictions, location_to_plot):
   ground_truth_color_params = model_colors('ground_truth')
 
   plt.plot(
-      predictions.dropna('time').time,
-      data_to_plot.sel(time=predictions.dropna('time').time),
+      predictions.time,
+      data_to_plot.sel(time=predictions.time),
       **ground_truth_color_params,
       label='ground truth')
   return None
