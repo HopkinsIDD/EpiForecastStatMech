@@ -212,7 +212,8 @@ class StatMechEstimator(estimator_base.Estimator):
       # predict_module emit two params for every observable: loc, raw_scale.
       # So the first columnn of the kernel should be an alpha for log_K
       # and the second should be an alpha for log_K_sd (apparently).
-      kernel = self.params_[0]["Dense_0"]["kernel"]
+      dense_name = [x for x in self.params_[0].keys() if "Dense" in x][0]
+      kernel = self.params_[0][dense_name]["kernel"]
       assert kernel.shape[1] == 2, "unexpected kernel shape."
       alpha = xarray.DataArray(
           np.asarray(kernel[:, :1]),
@@ -229,7 +230,8 @@ class StatMechEstimator(estimator_base.Estimator):
   def intercept(self):
     if issubclass(self.stat_model.predict_module, network_models.LinearModule):
       # see comments in alpha(self).
-      bias = self.params_[0]["Dense_0"]["bias"]
+      dense_name = [x for x in self.params_[0].keys() if "Dense" in x][0]
+      bias = self.params_[0][dense_name]["bias"]
       assert bias.shape == (2,), "unexpected bias shape."
       bias = xarray.DataArray(
           np.asarray(bias[:1]),

@@ -24,9 +24,12 @@ class PerceptronModule(nn.Module):
       output_size,
       hidden_layer_sizes=(64, 64),
       activation=jax.nn.relu,
+      use_batch_norm=True,
   ):
     """Computes the output of a multi-layer perceptron give `inputs`."""
     x = inputs
+    if use_batch_norm:
+      x = nn.BatchNorm(x)
     for size in hidden_layer_sizes:
       x = nn.Dense(x, size)
       x = activation(x)
