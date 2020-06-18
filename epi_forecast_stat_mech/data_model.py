@@ -135,6 +135,10 @@ def _helper_shift_dataarray(shifts, array_to_shift):
   return shifted_array, shift_dataarray
 
 
+def _first_true(arr, axis):
+  return np.apply_along_axis(lambda x: np.where(x)[0][0], axis=axis, arr=arr)
+
+
 def shift_timeseries(data, fraction_infected_limits, split_time):
   """Return a copy of data with shifted infection start times.
 
@@ -166,12 +170,11 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
         fraction_infected_limits[0], fraction_infected_limits[1],
         num_locations), dims=['location'])
 
-  cases = trajectories.new_infections.cumsum('time')
+  cases = trajectories.new_infections.fillna(0).cumsum('time')
   trajectories['final_size'] = cases.isel(time=-1)
   target_cases = (trajectories['fraction_infected'] *
                   trajectories['final_size']).round()
-  hit_times = np.apply_along_axis(
-      lambda x: np.where(x)[0][0], axis=-1, arr=cases >= target_cases)
+  hit_times = (cases >= target_cases).reduce(_first_true, dim='time')
   shifts_all = split_time - hit_times
 
   # We don't want to shift any infection curves so they start before time 0
