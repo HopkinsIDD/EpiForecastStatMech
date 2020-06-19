@@ -13,8 +13,11 @@ import numpy as np
 import re
 import xarray as xr
 
-valid_dimensions = ['location', 'time', 'static_covariate',
-                    'dynamic_covariate', 'model']
+valid_dimensions = [
+    'location', 'time', 'static_covariate', 'dynamic_covariate', 'model'
+]
+
+TIME_ZERO = np.datetime64('2019-12-31')
 
 
 def new_dataarray(parameters):
@@ -23,8 +26,9 @@ def new_dataarray(parameters):
   Create xr.DataArrays with consistent dimensions, coordinates, and units.
 
   Args:
-    parameters: a dictionary of (dimension: number) pairs.
-      Dimension must be in valid_dimensions. Number is the length of that axis.
+    parameters: a dictionary of (dimension: number) pairs. Dimension must be in
+      valid_dimensions. Number is the length of that axis.
+
   Returns:
     da: a xr.DataArray containing zeros along all specified dimensions
   """
@@ -47,8 +51,10 @@ def new_dataarray(parameters):
   return da
 
 
-def new_model(num_locations, num_time_steps,
-              num_static_covariates, num_dynamic_covariates=0):
+def new_model(num_locations,
+              num_time_steps,
+              num_static_covariates,
+              num_dynamic_covariates=0):
   """Return a xr.Dataset with an infection time series and a list of covariates.
 
   Args:
@@ -73,12 +79,12 @@ def new_model(num_locations, num_time_steps,
   static_covariates = new_dataarray({
       'location': num_locations,
       'static_covariate': num_static_covariates
-    })
+  })
 
   ds = xr.Dataset({
       'new_infections': new_infections,
       'static_covariates': static_covariates,
-      })
+  })
 
   ds['new_infections'].attrs[
       'description'] = 'Number of new infections at each location over time.'
@@ -104,9 +110,9 @@ def _helper_shift_dataarray(shifts, array_to_shift):
   """Helper function to shift array_to_shift by shift amount.
 
   Args:
-    shifts: a np.array of shape (location, ) containing the values to
-      shift by.
+    shifts: a np.array of shape (location, ) containing the values to shift by.
     array_to_shift: an xr.DataArray with dimensions (location,) to shift
+
   Returns:
     shifted_array: a copy of array_to_shift with the values shifted in time by
       shifts.
@@ -124,13 +130,13 @@ def _helper_shift_dataarray(shifts, array_to_shift):
 
   # Count the number of trajectories we don't shift,
   # raise a warning if we exceed 1/4 of all trajectories
-  num_not_shifted = xr.where(shift_dataarray == 0, 1,
-                             0).sum(['location'])
+  num_not_shifted = xr.where(shift_dataarray == 0, 1, 0).sum(['location'])
 
   if num_not_shifted > (len(array_to_shift.location) / 4):
-    logging.warning('More than 1/4 of the trajectories were not shifted in time'
-                    ' in %d locations or samples. Consider changing '
-                    'SPLIT_TIME.', (num_not_shifted.values))
+    logging.warning(
+        'More than 1/4 of the trajectories were not shifted in time in %d '
+        'locations or samples. Consider changing SPLIT_TIME.',
+        (num_not_shifted.values))
 
   return shifted_array, shift_dataarray
 
@@ -163,12 +169,12 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   # location.
   if 'fraction_infected' in trajectories.data_vars:
     trajectories['fraction_infected'].data = np.random.uniform(
-        fraction_infected_limits[0], fraction_infected_limits[1],
-        num_locations)
+        fraction_infected_limits[0], fraction_infected_limits[1], num_locations)
   else:
-    trajectories['fraction_infected'] = xr.DataArray(np.random.uniform(
-        fraction_infected_limits[0], fraction_infected_limits[1],
-        num_locations), dims=['location'])
+    trajectories['fraction_infected'] = xr.DataArray(
+        np.random.uniform(fraction_infected_limits[0],
+                          fraction_infected_limits[1], num_locations),
+        dims=['location'])
 
   cases = trajectories.new_infections.fillna(0).cumsum('time')
   trajectories['final_size'] = cases.isel(time=-1)
@@ -340,6 +346,7 @@ def calculate_infection_sums(ds):
 
   Args:
     ds: a xr.Dataset that represents the trajectories
+
   Returns:
     summed_ds: a xr.Dataset with extra DataArrays added for the cumulative and
     total infections
@@ -351,6 +358,26 @@ def calculate_infection_sums(ds):
   ds['total_infections'].attrs['description'] = 'Total infections.'
 
   return ds
+
+
+def datetime_to_int(date, ds=None):
+  if ds is None:
+    return (date - TIME_ZERO) // np.timedelta64(1, 'D')
+  if not hasattr(ds, 'original_time'):
+    raise ValueError('Dataset with no original_time cannot be used to '
+                     'convert datetimes to ints.')
+  int_time = xr.DataArray(
+      ds.time.values, dims=('original_time',), coords=[ds.original_time.values])
+  return int_time.sel(original_time=date)
+
+
+def int_to_datetime(int_date, ds=None):
+  if ds is None:
+    return TIME_ZERO + int_date * np.timedelta64(1, 'D')
+  if not hasattr(ds, 'original_time'):
+    raise ValueError('Dataset with no original_time cannot be used to '
+                     'convert ints to datetimes.')
+  return ds.original_time.sel(time=int_date)
 
 
 def compute_integer_time(trajectories):
@@ -384,17 +411,22 @@ def compute_numpy_index_time(trajectories):
   return numpy_time
 
 
-def convert_data_to_integer_time(trajectories, use_numpy_index_time=False):
+def convert_data_to_integer_time(trajectories, method='days_in_2020'):
   """Store original_time and replace time with integer time."""
   if trajectories.coords.get('original_time', None):
     assert np.issubdtype(trajectories.time.dtype, np.integer), (
         'Integer time expected, because original_time is present.')
     return trajectories
   time = trajectories.time
-  if use_numpy_index_time:
+  if method == 'days_in_2020':
+    integer_time = datetime_to_int(time)
+  elif method == 'numpy_index':
     integer_time = compute_numpy_index_time(trajectories)
-  else:
+  elif method == 'days_from_first_case':
     integer_time = compute_integer_time(trajectories)
+  else:
+    raise ValueError('method must be one of "days_in_2020", "numpy_index", or '
+                     '"days_from_first_case".')
   trajectories = trajectories.copy()
   trajectories['original_time'] = time
   trajectories['time'] = integer_time
