@@ -54,6 +54,9 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
                iter_max=100,
                gradient_steps=10000,
                learning_rate=1E-4,
+               fudge_scale=100.,
+               alpha_loss_weight=1E-1,
+               stat_loss_weight=1E0,
                verbose=1):
     """Construct an IterativeEstimator.
 
@@ -70,6 +73,17 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
       iter_max: positive integer. How many iterative loops to perform.
       gradient_steps: The number of adam steps to perform per iter.
       learning_rate: The learning rate (positive float; default 1E-4).
+      fudge_scale: (positive float) (inversely) governs the scale at which
+        alpha_loss curvature near 0 happens.
+      alpha_loss_weight: (non-negative float) Governs the weight on the
+        alpha_loss penalty, which concerns the grouped-lasso like penalty on
+        dynamic_covariates' coefficients. Note that this doesn't
+        affect the stat-model re-estimation step, only the mech_params to
+        mech_params_hat re-estimation step.
+      stat_loss_weight: (non-negative float) Governs the weight one the
+        mech_params versus mech_params_hat error term. Note that this doesn't
+        affect the stat-model re-estimation step, only the mech_params to
+        mech_params_hat re-estimation step.
       verbose: (Integer >= 0, default 1) Verbosity:
         0: Quiet.
         1: Reports every 1k steps.
@@ -86,18 +100,36 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
     self.iter_max = iter_max
     self.gradient_steps = gradient_steps
     self.learning_rate = learning_rate
+    self.fudge_scale = fudge_scale
+    self.alpha_loss_weight = alpha_loss_weight
+    self.stat_loss_weight = stat_loss_weight
     self.verbose = verbose
+
+  def center_dynamic_covariates(self, dynamic_covariates):
+    return ((dynamic_covariates - self.dynamic_covariate_m) /
+            self.dynamic_covariate_s)
 
   def _unflatten(self, x):
     return jnp.reshape(x, (-1, self.out_dim))
 
   def fit(self, data):
-    mech_model_class = self.mech_model_class
     data_model.validate_data_for_fit(data, require_dynamics=True)
-    self.data = data
-    # Theoretically there should be an instance per location (in the mech_param_stack)
-    # or I should re-design the class to be "stateless" i.e. this is a method,
-    # not an init.
+    self.data = data.copy()
+    self.dynamic_covariate_m = (
+        data.dynamic_covariates.mean(('time', 'location')))
+    self.dynamic_covariate_s = (
+        data.dynamic_covariates.std(('time', 'location')) + 1E-4)
+    # It's a bit ugly, but seems like the cleaner first pass. The dynamic
+    # coefficents are actually defined on the centered data scale; to effect
+    # this, we put centered data in place of the original here and effect the
+    # same centering in the predict call.
+    data['original_dynamic_covariates'] = data.dynamic_covariates
+    data['dynamic_covariates'] = self.center_dynamic_covariates(
+        data.dynamic_covariates)
+    mech_model_class = self.mech_model_class
+    # Theoretically there should be an instance per location
+    # (in the mech_param_stack) or I should re-design the class to be
+    # "stateless" i.e. this is a method, not an init.
     mech_model = mech_model_class(jax.random.PRNGKey(0), data.dynamic_covariate)
     self.mech_model = mech_model
     self.encoded_param_names = self.mech_model.encoded_param_names
@@ -127,8 +159,19 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
       # shape: (out_dim,)
       stat_log_prob = stat_plugin_error_model.log_prob(mech_params_stack).sum(
           axis=0)
-      mech_plus_current_stat_loss = -(mech_log_prob + jnp.sum(stat_log_prob))
-      return mech_plus_current_stat_loss
+      # Morally, alpha_loss is the norm (across location) of
+      # time-dependent-covariate regression coefficients (intercepts are not
+      # penalized), but it's approx. quadratic from 0. to O(1. / fudge_scale.)
+      alpha_scaled = (
+          mech_params_stack *
+          mech_model.flat_kernel_indicator[jnp.newaxis, :])
+      alpha_loss = (
+          soft_mean_square(self.fudge_scale * alpha_scaled, axis=0) /
+          self.fudge_scale)
+      penalized_mech_plus_current_stat_loss = (
+          -(mech_log_prob + self.stat_loss_weight * jnp.sum(stat_log_prob)) +
+          self.alpha_loss_weight * jnp.sum(alpha_loss))
+      return penalized_mech_plus_current_stat_loss
 
     mech_plus_stat_loss_val_and_grad = jax.jit(
         jax.value_and_grad(mech_plus_stat_errors))
@@ -212,6 +255,7 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
       plt.show()
 
   def predict(self, dynamic_covariates, num_samples, include_observed=False, seed=0):
+    centered_dynamic_covariates = self.center_dynamic_covariates(dynamic_covariates)
     # This API is subject to change in pending CLs.
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
@@ -221,7 +265,7 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
         mech_params,
         self.data,
         self.epidemics,
-        dynamic_covariates,
+        centered_dynamic_covariates,
         num_samples,
         rng,
         include_observed=include_observed)
@@ -349,6 +393,14 @@ def get_adam_optim_loop(f, learning_rate=1E-3):
   return train_loop
 
 
+def soft_norm(x, axis):
+  return jnp.sqrt(jnp.sum(jnp.square(x), axis=axis) + 1.) - 1.
+
+
+def soft_mean_square(x, axis):
+  return jnp.sqrt(jnp.mean(jnp.square(x), axis=axis) + 1.) - 1.
+
+
 def make_mean_estimators():
   return collections.defaultdict(
       lambda: sklearn.dummy.DummyRegressor(strategy='mean'))
@@ -360,6 +412,18 @@ def get_estimator_dict():
       'iterative_mean__DynamicMultiplicative'] = IterativeDynamicEstimator(
           mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
           stat_estimators=make_mean_estimators(), iter_max=20)
+  estimator_dict[
+      'iterative_mean__DynamicMultiplicative_reg_10'] = IterativeDynamicEstimator(
+          mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
+          stat_estimators=make_mean_estimators(), iter_max=20,
+          alpha_loss_weight=1E1,
+          stat_loss_weight=1E1)
+  estimator_dict[
+      'iterative_mean__DynamicMultiplicative_reg_100'] = IterativeDynamicEstimator(
+          mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
+          stat_estimators=make_mean_estimators(), iter_max=20,
+          alpha_loss_weight=1E2,
+          stat_loss_weight=1E2)
   estimator_dict['iterative_randomforest__DynamicMultiplicative'] = (
       IterativeDynamicEstimator(
           mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
