@@ -145,6 +145,37 @@ def _first_true(arr, axis):
   return np.apply_along_axis(lambda x: np.where(x)[0][0], axis=axis, arr=arr)
 
 
+def shift_timeseries_by(data, shifts_all):
+  """Return a copy of data with shifted infection start times.
+
+  Returns a copy of data with where time and location  dependent DataArrays are
+  shifted by a location dependent shift.
+
+  Args:
+    data: a xr.Dataset of the simulated infections over time.
+    shifts_all: The integer amount to shift time by in each location.
+
+  Returns:
+    trajectories: a copy of data with the start times of new_infections shifted.
+  """
+  trajectories = data.copy()
+
+  # We don't want to shift any infection curves so they start before time 0
+  shifts = np.where(shifts_all > 0, shifts_all, 0)
+
+  for d_var in trajectories.data_vars:
+    if 'time' in trajectories[d_var].dims:
+      if not 'location' in trajectories[d_var].dims:
+        raise ValueError('Only location dependent time-shifts are allowed; '
+                         f'{d_var} doesn\'t depend on location')
+      shifted_d_var, shift_dataarray = _helper_shift_dataarray(
+          shifts, trajectories[d_var])
+      trajectories[d_var] = shifted_d_var
+      trajectories['start_time'] = shift_dataarray
+
+  return trajectories
+
+
 def shift_timeseries(data, fraction_infected_limits, split_time):
   """Return a copy of data with shifted infection start times.
 
@@ -183,17 +214,7 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   hit_times = (cases >= target_cases).reduce(_first_true, dim='time')
   shifts_all = split_time - hit_times
 
-  # We don't want to shift any infection curves so they start before time 0
-  shifts = np.where(shifts_all > 0, shifts_all, 0)
-
-  for d_var in trajectories.data_vars:
-    if 'time' in trajectories[d_var].dims:
-      shifted_d_var, shift_dataarray = _helper_shift_dataarray(
-          shifts, trajectories[d_var])
-      trajectories[d_var] = shifted_d_var
-      trajectories['start_time'] = shift_dataarray
-
-  return trajectories
+  return shift_timeseries_by(trajectories, shifts_all)
 
 
 def validate_data(data,
