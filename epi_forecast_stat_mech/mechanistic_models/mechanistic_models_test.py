@@ -133,8 +133,7 @@ class MechanisticModelsTest(parameterized.TestCase):
     beta_fn = functools.partial(
         sir_sim.generate_betas_many_cov2, num_pred=3, num_not_pred=7)
     data = sir_sim.generate_social_distancing_simulations(
-        beta_fn, sir_sim.gen_social_distancing_weight, 1, 25, 200)
-    data = data.squeeze('sample')
+        beta_fn, sir_sim.gen_social_distancing_weight, 25, 200)
     data = data.sel(
         time=((data.new_infections.sum('location') >= 1).cumsum('time') >= 1))
     data = data.sel(location=(data.new_infections.sum('time') >= 100))
@@ -148,7 +147,7 @@ class MechanisticModelsTest(parameterized.TestCase):
         train)
     observed_epidemic, unused_record_rest = utils.split_along_axis(
         all_observed_epidemics, 0, 1)
-    dynamic_covariate = data.dynamic_covariates.isel(location=0).transpose(
+    dynamic_covariates0 = data.dynamic_covariates.isel(location=0).transpose(
         'time', 'dynamic_covariate').data
 
     model_log_prob = mech_model.log_likelihood(mech_model_params,
@@ -159,7 +158,7 @@ class MechanisticModelsTest(parameterized.TestCase):
 
     predicted_epidemics_trajectory = mech_model.predict(mech_model_params, rng,
                                                         observed_epidemic,
-                                                        dynamic_covariate)
+                                                        dynamic_covariates0)
     actual_shape = predicted_epidemics_trajectory.shape
     expected_shape = (data.sizes['time'],)
     self.assertEqual(actual_shape, expected_shape)

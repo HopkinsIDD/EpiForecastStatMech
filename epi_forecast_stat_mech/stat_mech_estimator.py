@@ -102,7 +102,7 @@ class StatMechEstimator(estimator_base.Estimator):
     train_steps = self.train_steps
     time_mask_value = self.time_mask_value
     seed = self.fit_seed
-    data_model.validate_data(data, require_no_samples=True)
+    data_model.validate_data_for_fit(data)
     # TODO(dkochkov) consider a tunable module for preprocessing.
     data["total"] = (
         ("location", "time",), np.cumsum(
@@ -194,6 +194,8 @@ class StatMechEstimator(estimator_base.Estimator):
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
                                                  self.params_[1])
 
+  # TODO(mcoram): Implement mech_params_hat.
+
   @property
   def alpha(self):
     if issubclass(self.stat_model.predict_module, network_models.LinearModule):
@@ -210,7 +212,8 @@ class StatMechEstimator(estimator_base.Estimator):
       # predict_module emit two params for every observable: loc, raw_scale.
       # So the first columnn of the kernel should be an alpha for log_K
       # and the second should be an alpha for log_K_sd (apparently).
-      kernel = self.params_[0]["Dense_0"]["kernel"]
+      dense_name = [x for x in self.params_[0].keys() if "Dense" in x][0]
+      kernel = self.params_[0][dense_name]["kernel"]
       assert kernel.shape[1] == 2, "unexpected kernel shape."
       alpha = xarray.DataArray(
           np.asarray(kernel[:, :1]),
@@ -223,6 +226,22 @@ class StatMechEstimator(estimator_base.Estimator):
       raise AttributeError("no alpha method for stat_model: %s" %
                            (self.stat_model.__class__,))
 
+  @property
+  def intercept(self):
+    if issubclass(self.stat_model.predict_module, network_models.LinearModule):
+      # see comments in alpha(self).
+      dense_name = [x for x in self.params_[0].keys() if "Dense" in x][0]
+      bias = self.params_[0][dense_name]["bias"]
+      assert bias.shape == (2,), "unexpected bias shape."
+      bias = xarray.DataArray(
+          np.asarray(bias[:1]),
+          dims=("encoded_param"),
+          coords=dict(
+              encoded_param=["log_K"]))
+      return bias
+    else:
+      raise AttributeError("no intercept method for stat_model: %s" %
+                           (self.stat_model.__class__,))
 
 def laplace_prior(parameters, scale_parameter=1.):
   return jax.tree_map(

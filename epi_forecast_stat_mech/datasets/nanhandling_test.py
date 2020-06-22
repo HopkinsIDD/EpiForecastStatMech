@@ -59,6 +59,15 @@ class NanhandlingTest(absltest.TestCase):
                          [np.nan, np.nan, np.nan, 3, 3]])
     np.testing.assert_array_equal(result, expected)
 
+  def test_fillna_bfill(self):
+    result = nanhandling.fillna_bfill(self.array)
+    expected = np.array([[5, 7, 7, 7, 2],
+                         [3, 1, 1, 8, np.nan],
+                         [3, 3, 3, 3, 1],
+                         [np.nan, np.nan, np.nan, np.nan, np.nan],
+                         [3, 3, 3, 3, np.nan]])
+    np.testing.assert_array_equal(result, expected)
+
   def test_fillna_interp(self):
     result = nanhandling.fillna_interp(self.array)
     expected = np.array([[5, 5 + (2/3), 5+ (4/3), 7, 2],

@@ -312,8 +312,8 @@ class DemoIntensityFamily(object):
 def make_demo_intensity_list(intensity_family, trajectories):
   if not np.issubdtype(trajectories.time.dtype, np.integer):
     # TODO(mcoram): Resolve integer time issues upstream.
-    trajectories = data_model.convert_data_to_integer_time(
-      trajectories, use_numpy_index_time=True)
+    trajectories = data_model.convert_data_to_integer_time(trajectories,
+                                                           method='numpy_index')
   assert np.issubdtype(trajectories.time.dtype,
                        np.integer), 'Integer time required.'
   accum = []

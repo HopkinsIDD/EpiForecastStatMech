@@ -8,13 +8,16 @@ secondary quantities and store them in the DataSeries.
 """
 from .constants import coord_units
 from .constants import coordinates
-
+from absl import logging
 import numpy as np
 import re
 import xarray as xr
 
-valid_dimensions = ['sample', 'location', 'time', 'static_covariate',
-                    'dynamic_covariate', 'model']
+valid_dimensions = [
+    'location', 'time', 'static_covariate', 'dynamic_covariate', 'model'
+]
+
+TIME_ZERO = np.datetime64('2019-12-31')
 
 
 def new_dataarray(parameters):
@@ -23,8 +26,9 @@ def new_dataarray(parameters):
   Create xr.DataArrays with consistent dimensions, coordinates, and units.
 
   Args:
-    parameters: a dictionary of (dimension: number) pairs.
-      Dimension must be in valid_dimensions. Number is the length of that axis.
+    parameters: a dictionary of (dimension: number) pairs. Dimension must be in
+      valid_dimensions. Number is the length of that axis.
+
   Returns:
     da: a xr.DataArray containing zeros along all specified dimensions
   """
@@ -47,13 +51,13 @@ def new_dataarray(parameters):
   return da
 
 
-def new_model(num_samples, num_locations, num_time_steps,
-              num_static_covariates, num_dynamic_covariates=0):
+def new_model(num_locations,
+              num_time_steps,
+              num_static_covariates,
+              num_dynamic_covariates=0):
   """Return a xr.Dataset with an infection time series and a list of covariates.
 
   Args:
-    num_samples: int representing the number of unique samples to run for each
-      location
     num_locations: int representing the number of locations to model epidemics
       for
     num_time_steps: int representing the maximum number of time steps the
@@ -68,7 +72,6 @@ def new_model(num_samples, num_locations, num_time_steps,
       covariates for each location.
   """
   new_infections = new_dataarray({
-      'sample': num_samples,
       'location': num_locations,
       'time': num_time_steps,
   })
@@ -76,12 +79,12 @@ def new_model(num_samples, num_locations, num_time_steps,
   static_covariates = new_dataarray({
       'location': num_locations,
       'static_covariate': num_static_covariates
-    })
+  })
 
   ds = xr.Dataset({
       'new_infections': new_infections,
       'static_covariates': static_covariates,
-      })
+  })
 
   ds['new_infections'].attrs[
       'description'] = 'Number of new infections at each location over time.'
@@ -103,6 +106,76 @@ def new_model(num_samples, num_locations, num_time_steps,
   return ds
 
 
+def _helper_shift_dataarray(shifts, array_to_shift):
+  """Helper function to shift array_to_shift by shift amount.
+
+  Args:
+    shifts: a np.array of shape (location, ) containing the values to shift by.
+    array_to_shift: an xr.DataArray with dimensions (location,) to shift
+
+  Returns:
+    shifted_array: a copy of array_to_shift with the values shifted in time by
+      shifts.
+    shift_dataarray: an xr.DataArray of dimension (location,) containing
+      the times we shifted by.
+  """
+
+  shift_dataarray = xr.DataArray(shifts, dims=['location'])
+  old_ni = array_to_shift.copy()
+  shifted_array = xr.concat([
+      old_ni.isel(location=k).shift(time=shifts[k], fill_value=0)
+      for k in range(old_ni.sizes['location'])
+  ],
+                            dim='location')
+
+  # Count the number of trajectories we don't shift,
+  # raise a warning if we exceed 1/4 of all trajectories
+  num_not_shifted = xr.where(shift_dataarray == 0, 1, 0).sum(['location'])
+
+  if num_not_shifted > (len(array_to_shift.location) / 4):
+    logging.warning(
+        'More than 1/4 of the trajectories were not shifted in time in %d '
+        'locations or samples. Consider changing SPLIT_TIME.',
+        (num_not_shifted.values))
+
+  return shifted_array, shift_dataarray
+
+
+def _first_true(arr, axis):
+  return np.apply_along_axis(lambda x: np.where(x)[0][0], axis=axis, arr=arr)
+
+
+def shift_timeseries_by(data, shifts_all):
+  """Return a copy of data with shifted infection start times.
+
+  Returns a copy of data with where time and location  dependent DataArrays are
+  shifted by a location dependent shift.
+
+  Args:
+    data: a xr.Dataset of the simulated infections over time.
+    shifts_all: The integer amount to shift time by in each location.
+
+  Returns:
+    trajectories: a copy of data with the start times of new_infections shifted.
+  """
+  trajectories = data.copy()
+
+  # We don't want to shift any infection curves so they start before time 0
+  shifts = np.where(shifts_all > 0, shifts_all, 0)
+
+  for d_var in trajectories.data_vars:
+    if 'time' in trajectories[d_var].dims:
+      if not 'location' in trajectories[d_var].dims:
+        raise ValueError('Only location dependent time-shifts are allowed; '
+                         f'{d_var} doesn\'t depend on location')
+      shifted_d_var, shift_dataarray = _helper_shift_dataarray(
+          shifts, trajectories[d_var])
+      trajectories[d_var] = shifted_d_var
+      trajectories['start_time'] = shift_dataarray
+
+  return trajectories
+
+
 def shift_timeseries(data, fraction_infected_limits, split_time):
   """Return a copy of data with shifted infection start times.
 
@@ -122,63 +195,58 @@ def shift_timeseries(data, fraction_infected_limits, split_time):
   """
   trajectories = data.copy()
 
-  num_samples = len(trajectories.sample.values)
   num_locations = len(trajectories.location.values)
   # Randomly generate the fraction of infected people for each
-  # sample and location.
-  trajectories['fraction_infected'].data = np.random.uniform(
-      fraction_infected_limits[0], fraction_infected_limits[1],
-      (num_samples, num_locations))
-  cases = trajectories.new_infections.cumsum('time')
+  # location.
+  if 'fraction_infected' in trajectories.data_vars:
+    trajectories['fraction_infected'].data = np.random.uniform(
+        fraction_infected_limits[0], fraction_infected_limits[1], num_locations)
+  else:
+    trajectories['fraction_infected'] = xr.DataArray(
+        np.random.uniform(fraction_infected_limits[0],
+                          fraction_infected_limits[1], num_locations),
+        dims=['location'])
+
+  cases = trajectories.new_infections.fillna(0).cumsum('time')
   trajectories['final_size'] = cases.isel(time=-1)
   target_cases = (trajectories['fraction_infected'] *
                   trajectories['final_size']).round()
-  hit_times = np.apply_along_axis(
-      lambda x: np.where(x)[0][0], axis=-1, arr=cases >= target_cases)
+  hit_times = (cases >= target_cases).reduce(_first_true, dim='time')
   shifts_all = split_time - hit_times
 
-  # We don't want to shift any infection curves so they start before time 0
-  shifts = np.where(shifts_all > 0, shifts_all, 0)
-
-  # TODO(edklein) make this its own function
-  shift_dataarray = xr.DataArray(shifts, dims=['samples', 'location'])
-  old_ni = trajectories.new_infections
-  shifted_new_infections = xr.concat([
-      xr.concat([
-          old_ni.isel(sample=j, location=k).shift(
-              time=shifts[j, k], fill_value=0)
-          for k in range(old_ni.sizes['location'])
-      ],
-                dim='location')
-      for j in range(old_ni.sizes['sample'])
-  ],
-                                     dim='sample')
-  trajectories['new_infections'] = shifted_new_infections
-  trajectories['start_time'] = shift_dataarray
-  return trajectories
+  return shift_timeseries_by(trajectories, shifts_all)
 
 
 def validate_data(data,
                   enable_regex_check=False,
                   require_dynamics=False,
                   require_samples=False,
-                  require_no_samples=False):
+                  require_no_samples=False,
+                  require_integer_time=True,
+                  require_canonical_split_time=True):
   """Check the validity of the data xarray."""
   # TODO(mcoram): Consider validating data that has a model dim.
+  # TODO(edklein): Consider removing require_samples.
   if require_samples and require_no_samples:
     raise ValueError('invalid call: only require one of samples or no_samples.')
   if not isinstance(data, xr.Dataset):
     raise ValueError('data must be an xarray')
+
   # Check for required data_vars.
   required_data_vars_set = set(['new_infections', 'static_covariates'])
   if require_dynamics:
-    required_data_vars_set = required_data_vars_set.union(
-        set(['dynamic_covariates']))
+    required_data_vars_set.add('dynamic_covariates')
+  if require_canonical_split_time:
+    required_data_vars_set.add('canonical_split_time')
   data_vars_set = set(data.data_vars.keys())
   missing_data_vars = required_data_vars_set.difference(data_vars_set)
-  if missing_data_vars != set():
-    raise ValueError('data is missing required data_vars: %s' %
-                     (missing_data_vars,))
+  if missing_data_vars:
+    helper_strs = []
+    if 'canonical_split_time' in missing_data_vars:
+      helper_strs.append('To add a sensible default canonical_split_time, run '
+                         'data_model.set_canonical_split_time on your data.')
+    raise ValueError('data is missing required data_vars: %s\n%s' %
+                     (missing_data_vars, '\n'.join(helper_strs)))
 
   required_dims_set = set(['location', 'time', 'static_covariate'])
   if require_samples:
@@ -219,6 +287,11 @@ def validate_data(data,
   missing_dims = required_dims_set.difference(data_dims_set)
   if missing_dims != set():
     raise ValueError('data is missing required dims: %s' % (missing_dims,))
+
+  if require_integer_time and not np.issubdtype(data.time.dtype, np.integer):
+    raise ValueError('`data.time` is required to be integer. Please run '
+                     'data_model.convert_data_to_integer_time on this data.')
+
   # Make requirements about null patterns.
   static_covariates_null = data.static_covariates.transpose(
       'location', 'static_covariate').isnull()
@@ -250,30 +323,38 @@ def validate_data(data,
     raise ValueError('data.new_infections contains negative entries.')
 
 
+def validate_data_for_fit(data, **kwargs):
+  validate_data(
+      data,
+      require_no_samples=True,
+      require_canonical_split_time=False,
+      **kwargs)
+
+
 def calculate_cumulative_infections(new_infections):
   """Calculate the cumulative infections over time.
 
   Args:
     new_infections: a xr.DataArray containing new_infections and dimension
-      (samples, locations, time)
+      (locations, time)
 
   Returns:
     cumulative_infections: a xr.DataArray containing the cumulative infections
-    of dimension (samples, locations, time)
+    of dimension (locations, time)
   """
   return new_infections.cumsum('time')
 
 
 def calculate_total_infections(new_infections):
-  """Calculate the total infections at each location and sample.
+  """Calculate the total infections at each location.
 
   Args:
     new_infections: a xr.DataArray containing new_infections and dimension
-      (samples, locations, time)
+      (locations, time)
 
   Returns:
     total_infections: a xr.DataArray containing the summed infections of
-    dimension (samples, locations)
+    dimension (locations)
   """
 
   return new_infections.sum('time')
@@ -286,6 +367,7 @@ def calculate_infection_sums(ds):
 
   Args:
     ds: a xr.Dataset that represents the trajectories
+
   Returns:
     summed_ds: a xr.Dataset with extra DataArrays added for the cumulative and
     total infections
@@ -297,6 +379,26 @@ def calculate_infection_sums(ds):
   ds['total_infections'].attrs['description'] = 'Total infections.'
 
   return ds
+
+
+def datetime_to_int(date, ds=None):
+  if ds is None:
+    return (date - TIME_ZERO) // np.timedelta64(1, 'D')
+  if not hasattr(ds, 'original_time'):
+    raise ValueError('Dataset with no original_time cannot be used to '
+                     'convert datetimes to ints.')
+  int_time = xr.DataArray(
+      ds.time.values, dims=('original_time',), coords=[ds.original_time.values])
+  return int_time.sel(original_time=date)
+
+
+def int_to_datetime(int_date, ds=None):
+  if ds is None:
+    return TIME_ZERO + int_date * np.timedelta64(1, 'D')
+  if not hasattr(ds, 'original_time'):
+    raise ValueError('Dataset with no original_time cannot be used to '
+                     'convert ints to datetimes.')
+  return ds.original_time.sel(time=int_date)
 
 
 def compute_integer_time(trajectories):
@@ -330,17 +432,22 @@ def compute_numpy_index_time(trajectories):
   return numpy_time
 
 
-def convert_data_to_integer_time(trajectories, use_numpy_index_time=False):
+def convert_data_to_integer_time(trajectories, method='days_in_2020'):
   """Store original_time and replace time with integer time."""
   if trajectories.coords.get('original_time', None):
     assert np.issubdtype(trajectories.time.dtype, np.integer), (
         'Integer time expected, because original_time is present.')
     return trajectories
   time = trajectories.time
-  if use_numpy_index_time:
+  if method == 'days_in_2020':
+    integer_time = datetime_to_int(time)
+  elif method == 'numpy_index':
     integer_time = compute_numpy_index_time(trajectories)
-  else:
+  elif method == 'days_from_first_case':
     integer_time = compute_integer_time(trajectories)
+  else:
+    raise ValueError('method must be one of "days_in_2020", "numpy_index", or '
+                     '"days_from_first_case".')
   trajectories = trajectories.copy()
   trajectories['original_time'] = time
   trajectories['time'] = integer_time
@@ -350,3 +457,10 @@ def convert_data_to_integer_time(trajectories, use_numpy_index_time=False):
     idx = np.searchsorted(trajectories['original_time'], orig_split_time)
     trajectories['canonical_split_time'] = trajectories['time'][idx]
   return trajectories
+
+
+def set_sensible_canonical_split_time(data):
+  peak_idx = data['new_infections'].argmax('time', skipna=True)
+  peak_time = data.time[peak_idx].drop('time')
+  peak_times = np.sort(peak_time.values.ravel())
+  data['canonical_split_time'] = peak_times[len(peak_times) // 2]

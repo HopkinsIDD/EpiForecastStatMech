@@ -4,6 +4,7 @@
 import functools
 
 import jax
+from jax import numpy as jnp
 
 
 def trajectories(rollout_fn, rng, args, nlocations, nsamples):
@@ -62,4 +63,41 @@ def trajectories_from_model(mechanistic_model, parameters, rng,
         params, rng_, obs, length, include_observed=include_observed)
 
   return trajectories(rollout_fn, rng, (parameters, observed_epidemics),
+                      nlocations, nsamples)
+
+
+@functools.partial(jax.jit, static_argnums=(0, 4, 5))
+def trajectories_from_dynamic_model(mechanistic_model, parameters, rng,
+                                    observed_epidemics, dynamic_covariates,
+                                    nsamples):
+  """Computes batches of `nsamples` for `parameters` and `observed_epidemics`.
+
+  Args:
+    mechanistic_model: a `MechanisticModel`.
+    parameters: a batch of parameters accepted by `mechanistic_model`.
+    rng: a `jax.random.PRNGKey`.
+    observed_epidemics: a batched pytree of observed epidemics that can be
+      passed to `mechanistic_model`.
+    dynamic_covariates: The dynamic_covariates behind the full time course --
+      i.e. starting with the observed data's dynamic_covariates and ending
+      however far into the "future" we wish to predict.
+    nsamples: the number of samples for each 'row' of `parameters` and
+      `observations`.
+
+  Returns:
+    An array of shape`[batch, nsamples, dynamic_covariates.sizes['time']]`.
+  """
+
+  nlocations = jax.tree_leaves(parameters)[0].shape[0]
+  jnp_dynamic_covariates = jnp.asarray(
+      dynamic_covariates.transpose('location', 'time',
+                                   'dynamic_covariate').data)
+
+  def rollout_fn(rng_, args):
+    params, obs, dynamic_covariates_slice = args
+    return mechanistic_model.predict(
+        params, rng_, obs, dynamic_covariates_slice, include_observed=True)
+
+  return trajectories(rollout_fn, rng,
+                      (parameters, observed_epidemics, jnp_dynamic_covariates),
                       nlocations, nsamples)

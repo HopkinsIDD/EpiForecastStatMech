@@ -96,6 +96,21 @@ def fillna_ffill(array):
   return result
 
 
+def fillna_bfill(array):
+  """Backward fills an array.
+
+  Args:
+    array: A 2d numpy array with dimensions (location, time)
+  Returns:
+    A numpy array.
+  """
+
+  _assume_2d(array)
+  flipped = np.flip(array)
+  filled = fillna_ffill(flipped)
+  return np.flip(filled)
+
+
 def fillna_interp(array):
   """Applies 1-d linear interpolation.
 
