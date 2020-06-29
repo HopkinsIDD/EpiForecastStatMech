@@ -260,11 +260,12 @@ def get_estimator_dict(
                          mechanistic_models.GaussianModel,
                          mechanistic_models.ViboudChowellModelPseudoLikelihood,
                          mechanistic_models.GaussianModelPseudoLikelihood,
+                         mechanistic_models.StepBasedMultiplicativeGrowthModel
                          ),
     list_of_stat_module=(network_models.LinearModule,
                          network_models.PerceptronModule),
     list_of_prior_names=("None", "Laplace"),
-    list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL"),
+    list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL", "MultiplicativeGrowth"),
     list_of_stat_names=("Linear", "MLP")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated

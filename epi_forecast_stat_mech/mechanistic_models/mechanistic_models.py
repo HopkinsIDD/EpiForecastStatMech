@@ -511,6 +511,24 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
     """See base class."""
     return {"epidemic_size": parameters[..., -1:]}
 
+  # These are kind of a compatibility layer thing.
+  @property
+  def param_names(self):
+    return self.step_based_param_names
+
+  @property
+  def encoded_param_names(self):
+    return self.step_based_encoded_param_names
+
+  def decode_params(self, parameters):
+    return jnp.exp(jnp.asarray(parameters))
+
+  def log_prior(self, parameters):
+    """Returns log_probability prior of the `parameters` of the model."""
+    return jnp.zeros_like(parameters)
+
+
+
 
 # TODO(jamieas): unify VC and Gaussian models as subclasses of `IntensityModel`.
 # TODO(dkochkov) add pytype annotations, refer to decided `EpidemicsRecord`.
