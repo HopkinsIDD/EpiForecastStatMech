@@ -40,9 +40,7 @@ class TestRunOnData(absltest.TestCase):
     data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
     train_data, test_data = run_on_data.train_test_split_time(data, split_day)
 
-    self.assertCountEqual(
-        ['location', 'time', 'static_covariate'],
-        test_data.dims)
+    self.assertCountEqual(['location', 'time'], test_data.dims)
     self.assertLen(test_data.time, 100 - split_day)
     self.assertLen(train_data.time, split_day)
     np.testing.assert_array_equal(data.location, train_data.location)

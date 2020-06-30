@@ -173,14 +173,14 @@ class StatMechEstimator(estimator_base.Estimator):
     if not hasattr(self, "params_"):
       raise AttributeError("`fit` must be called before `predict`.")
 
-  def predict(self, time_steps, num_samples, seed=0):
+  def predict(self, test_data, num_samples, seed=0):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
     # Should mech_params be sampled from a distribution instead?
     _, mech_params = self.params_
     return predict_lib.simulate_predictions(self.mech_model, mech_params,
                                             self.data, self.epidemics,
-                                            time_steps, num_samples, rng)
+                                            test_data, num_samples, rng)
 
   @property
   def mech_params(self):

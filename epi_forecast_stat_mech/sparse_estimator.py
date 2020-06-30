@@ -287,13 +287,13 @@ class SparseEstimator(estimator_base.Estimator):
   def save(self, file_out):
     pickle.dump(self, file_out)
 
-  def predict(self, time_steps, num_samples, seed=0):
+  def predict(self, test_data, num_samples, seed=0):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
     mech_params = self.mech_params_for_jax_code
     return predict_lib.simulate_predictions(self.mech_model, mech_params,
                                             self.data, self.epidemics,
-                                            time_steps, num_samples, rng)
+                                            test_data, num_samples, rng)
 
 
 def get_estimator_dict():

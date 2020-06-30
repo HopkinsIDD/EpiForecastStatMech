@@ -9,28 +9,12 @@ import xarray
 from epi_forecast_stat_mech.evaluation import monte_carlo  # pylint: disable=g-bad-import-order
 
 
-def wrap_predictions(predictions, data, num_samples, time_steps,
-                     include_observed):
-
+def wrap_predictions(predictions, locations, num_samples, times):
   # TODO(jamieas): consider indexing by seed.
   sample = np.arange(num_samples)
-
-  # Here we assume evenly spaced integer time values.
-  epidemic_time = data.time.data
-  try:
-    time_delta = epidemic_time[1] - epidemic_time[0]
-  except IndexError:  # time 1 may not exist.
-    # An alternative is to make it datetime.timedelta(1) for a calendar day.
-    time_delta = 1
-  time = np.arange(1, time_steps + 1) * time_delta + epidemic_time[-1]
-  if include_observed:
-    time = np.concatenate((epidemic_time, time))
-
-  location = data.location
-
   return xarray.DataArray(
       predictions,
-      coords=[location, sample, time],
+      coords=[locations, sample, times],
       dims=['location', 'sample', 'time']).rename('new_infections')
 
 
@@ -38,11 +22,11 @@ def simulate_predictions(mech_model,
                          mech_params,
                          data,
                          epidemics,
-                         time_steps,
+                         test_data,
                          num_samples,
                          rng,
                          include_observed=False):
-
+  time_steps = len(test_data.time)
   predictions = monte_carlo.trajectories_from_model(
       mech_model,
       mech_params,
@@ -51,8 +35,11 @@ def simulate_predictions(mech_model,
       time_steps,
       num_samples,
       include_observed)
-  return wrap_predictions(predictions, data, num_samples, time_steps,
-                          include_observed)
+  if include_observed:
+    times = np.concatenate((data.time, test_data.time))
+  else:
+    times = test_data.time
+  return wrap_predictions(predictions, data.location, num_samples, times)
 
 
 def simulate_dynamic_predictions(mech_model,
@@ -72,10 +59,10 @@ def simulate_dynamic_predictions(mech_model,
       dynamic_covariates,
       num_samples)
 
-  time_steps = dynamic_covariates.sizes['time'] - epidemics.t.shape[1]
-  full_predictions = wrap_predictions(predictions, data, num_samples,
-                                      time_steps, True)
+  full_predictions = wrap_predictions(predictions, data.location, num_samples,
+                                      dynamic_covariates.time)
   if not include_observed:
+    time_steps = dynamic_covariates.sizes['time'] - epidemics.t.shape[1]
     return full_predictions.isel(time=slice(-time_steps, None))
   return full_predictions
 

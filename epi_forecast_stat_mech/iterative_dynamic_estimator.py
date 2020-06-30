@@ -13,6 +13,7 @@ import numpy as np
 import scipy
 import sklearn
 import sklearn.inspection
+import xarray as xr
 
 from epi_forecast_stat_mech import data_model
 from epi_forecast_stat_mech import estimator_base
@@ -254,7 +255,9 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
       fig.tight_layout()
       plt.show()
 
-  def predict(self, dynamic_covariates, num_samples, include_observed=False, seed=0):
+  def predict(self, test_data, num_samples, seed=0):
+    dynamic_covariates = xr.concat([self.data.dynamic_covariates,
+                                    test_data.dynamic_covariates], dim='time')
     centered_dynamic_covariates = self.center_dynamic_covariates(dynamic_covariates)
     # This API is subject to change in pending CLs.
     self._check_fitted()
@@ -267,8 +270,7 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
         self.epidemics,
         centered_dynamic_covariates,
         num_samples,
-        rng,
-        include_observed=include_observed)
+        rng)
 
   @property
   def mech_params(self):

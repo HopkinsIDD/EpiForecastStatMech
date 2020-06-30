@@ -48,7 +48,7 @@ class Estimator:
     """
     return self
 
-  def predict(self, seed, time_steps, num_samples):
+  def predict(self, test_data, num_samples, seed):
     """Make predictions from this estimator.
 
     The implementation of typical ``predict`` method would sample from the
@@ -58,9 +58,10 @@ class Estimator:
     first.
 
     Args:
-      seed: an integer seed for generating rollouts.
-      time_steps: the length of the trajectories to generate.
+      test_data: an xarray dataset with dynamic covariates. The time attribute
+        of test_data specifies how long to roll out trajectories.
       num_samples: the number of trajectories to generate for each location.
+      seed: an integer seed for generating rollouts.
 
     Returns:
       An xarray of predictions. The axes are `location`, `sample` and `time`.
