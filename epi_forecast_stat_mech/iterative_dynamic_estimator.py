@@ -431,4 +431,14 @@ def get_estimator_dict():
           mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
           stat_estimators=None,
           iter_max=20))
+  estimator_dict[
+      'iterative_mean__DynamicBaselineSEIRModel'] = IterativeDynamicEstimator(
+          mech_model_class=mechanistic_models.DynamicBaselineSEIRModel,
+          stat_estimators=make_mean_estimators(),
+          iter_max=20)
+  estimator_dict[
+      'iterative_mean__DynamicBaselineSEIRModel_reg_10'] = IterativeDynamicEstimator(
+          mech_model_class=mechanistic_models.DynamicBaselineSEIRModel,
+          stat_estimators=make_mean_estimators(),
+          iter_max=100, stat_loss_weight=1E1, alpha_loss_weight=1E-2)
   return estimator_dict

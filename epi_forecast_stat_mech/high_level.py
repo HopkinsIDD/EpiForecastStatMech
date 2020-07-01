@@ -16,15 +16,10 @@ from epi_forecast_stat_mech.stat_mech_estimator import StatMechEstimator
 
 def get_estimator_dict():
   estimator_dict = {}
-  modules = [rtlive, iterative_estimator, sparse_estimator, stat_mech_estimator]
-  for module in modules:
-    estimator_dict.update(module.get_estimator_dict())
-  return estimator_dict
-
-
-def get_dynamic_estimator_dict():
-  estimator_dict = {}
-  modules = [iterative_dynamic_estimator]
+  modules = [
+      rtlive, iterative_estimator, sparse_estimator, stat_mech_estimator,
+      iterative_dynamic_estimator
+  ]
   for module in modules:
     estimator_dict.update(module.get_estimator_dict())
   return estimator_dict
