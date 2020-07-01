@@ -25,6 +25,8 @@ def train_test_split_time(data, split_day):
   things_included = ['location', 'time']
   if hasattr(test_data, 'dynamic_covariates'):
     things_included.append('dynamic_covariates')
+  if 'original_time' in test_data.data_vars.keys():
+    things_included.append('original_time')
   test_data = test_data[things_included]
 
   train_data.attrs['split'] = 'train'
