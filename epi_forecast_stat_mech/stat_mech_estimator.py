@@ -176,11 +176,18 @@ class StatMechEstimator(estimator_base.Estimator):
   def predict(self, test_data, num_samples, seed=0):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
-    # Should mech_params be sampled from a distribution instead?
+
     _, mech_params = self.params_
+
+    sample_mech_params_fn = getattr(
+        self, "mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
+            jnp.broadcast_to(mech_params,
+                             (num_samples,) + mech_params.shape), 1, 0))
+
     return predict_lib.simulate_predictions(self.mech_model, mech_params,
                                             self.data, self.epidemics,
-                                            test_data, num_samples, rng)
+                                            test_data, num_samples, rng,
+                                            sample_mech_params_fn)
 
   @property
   def mech_params(self):

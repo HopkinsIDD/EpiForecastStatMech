@@ -1,8 +1,12 @@
 # Lint as: python3
 """Helpers to make predictions using mechanistic models."""
 
+import functools
 import jax
 import jax.numpy as jnp
+import tensorflow_probability as tfp
+tfp = tfp.experimental.substrates.jax
+tfd = tfp.distributions
 import numpy as np
 import xarray
 
@@ -25,15 +29,20 @@ def simulate_predictions(mech_model,
                          test_data,
                          num_samples,
                          rng,
+                         sample_mech_params_fn,
                          include_observed=False):
+
   time_steps = len(test_data.time)
+  key, subkey = jax.random.split(rng)
+
+  sampled_mech_params = sample_mech_params_fn(subkey, num_samples)
+  key, subkey = jax.random.split(key)
   predictions = monte_carlo.trajectories_from_model(
       mech_model,
-      mech_params,
-      rng,
+      sampled_mech_params,
+      subkey,
       epidemics,
       time_steps,
-      num_samples,
       include_observed)
   if include_observed:
     times = np.concatenate((data.time, test_data.time))
@@ -49,12 +58,15 @@ def simulate_dynamic_predictions(mech_model,
                                  dynamic_covariates,
                                  num_samples,
                                  rng,
+                                 sample_mech_params_fn,
                                  include_observed=False):
+  key, subkey = jax.random.split(rng)
+  sampled_mech_params = sample_mech_params_fn(subkey, num_samples)
 
   predictions = monte_carlo.trajectories_from_dynamic_model(
       mech_model,
-      mech_params,
-      rng,
+      sampled_mech_params,
+      key,
       epidemics,
       dynamic_covariates,
       num_samples)
