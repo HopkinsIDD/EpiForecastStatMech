@@ -13,6 +13,9 @@ import jax.numpy as jnp
 import tensorflow_probability as tfp
 import xarray as xr
 
+tfp = tfp.experimental.substrates.jax
+tfd = tfp.distributions
+
 
 def _helper_sample_mech_params(rngkey, num_samples, initial_mech_params,
                                scale, rand_fun=tfd.Normal):
