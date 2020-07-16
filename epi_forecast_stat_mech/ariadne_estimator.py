@@ -6,10 +6,12 @@ import logging
 import warnings
 
 from epi_forecast_stat_mech import estimator_base
+from epi_forecast_stat_mech import high_level
 from epi_forecast_stat_mech import tf_common
 import jax
 from jax.experimental import optimizers
 import jax.numpy as jnp
+import numpy as np
 import tensorflow_probability as tfp
 import xarray as xr
 
@@ -73,8 +75,8 @@ class AriadneEstimator(estimator_base.Estimator):
                jesm_estimator,
                validation_time,
                train_steps,
-               alpha=jnp.asarray([.02, .05, .1, .2, .3, .4, .5, .6, .7, .8,
-                                  .9]),
+               alpha=np.asarray([.02, .05, .1, .2, .3, .4, .5, .6, .7, .8,
+                                 .9]),
                fused_train_steps=100,
                fit_seed=0,
                predict_seed=42,
@@ -290,9 +292,13 @@ class AriadneEstimator(estimator_base.Estimator):
       scale = jnp.asarray([scale])
       observations = jnp.asarray(calculate_observable_fn(validation_inf))
       # Assumes estimator has been fit already
-      self.small_estimator.sample_mech_params_fn = functools.partial(_helper_sample_mech_params, initial_mech_params=small_estimator.mech_params, scale=scale, rand_fun=tfd.Normal)
-      prediction_dist = self.small_estimator.predict(
-          validation_inf, self.num_samples)
+      self.small_estimator.sample_mech_params_fn = functools.partial(
+          _helper_sample_mech_params,
+          initial_mech_params=self.small_estimator.mech_params,
+          scale=scale,
+          rand_fun=tfd.Normal)
+      prediction_dist = self.small_estimator.predict(validation_inf,
+                                                     self.num_samples)
       predictions = calculate_observable_fn(prediction_dist)
       return jax.numpy.mean(
           jax.vmap(sample_based_weighted_interval_score,
@@ -335,15 +341,36 @@ class AriadneEstimator(estimator_base.Estimator):
     if not fitted or self.fit_all:
       print('fitting jesm estimator on all training data')
       self.jesm_estimator.fit(self.train_data)
-      
+
     return self
 
   def predict(self, test_data):
     """Predict using new scale parameters."""
     self._check_trained()
+    self.small_estimator.sample_mech_params_fn = functools.partial(
+        _helper_sample_mech_params,
+        initial_mech_params=self.small_estimator.mech_params,
+        scale=self.scale_params,
+        rand_fun=tfd.Normal)
+
     predictions = self.jesm_estimator.predict(
         test_data,
-        num_samples=self.num_samples,
-        seed=self.predict_seed,
-        scale=self.scale_params)
+        num_samples=self.num_samples)
     return predictions
+
+
+def get_estimator_dict(
+    validation_time=14,
+    train_steps=10000,
+    num_samples=100,
+    fit_all=True):
+  estimator_dict = {}
+  small_estimators = high_level.get_estimator_dict()
+  for small_estimator in small_estimators.keys():
+    if hasattr(small_estimator, 'mech_model'):
+      estimator_dict['AE_'+small_estimator] = AriadneEstimator(small_estimator,
+                                                               validation_time,
+                                                               train_steps,
+                                                               num_samples,
+                                                               fit_all)
+  return estimator_dict

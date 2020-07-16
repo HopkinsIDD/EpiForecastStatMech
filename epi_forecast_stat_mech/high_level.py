@@ -1,6 +1,7 @@
 # Lint as: python3
 """Pull the various high_level models into a single module."""
 
+from epi_forecast_stat_mech import ariadne_estimator
 from epi_forecast_stat_mech import iterative_estimator
 from epi_forecast_stat_mech import iterative_dynamic_estimator
 from epi_forecast_stat_mech import rtlive
@@ -22,4 +23,12 @@ def get_estimator_dict():
   ]
   for module in modules:
     estimator_dict.update(module.get_estimator_dict())
+  return estimator_dict
+
+
+def get_meta_estimator_dict(validation_time=14):
+  estimator_dict = {}
+  modules = [ariadne_estimator]
+  for module in modules:
+    estimator_dict.update(module.get_estimator_dict(validation_time))
   return estimator_dict
