@@ -293,7 +293,7 @@ class SparseEstimator(estimator_base.Estimator):
     mech_params = self.mech_params_for_jax_code
 
     sample_mech_params_fn = getattr(
-        self, 'mech_params_fn', lambda rngkey, num_samples: jnp.swapaxes(
+        self, 'sample_mech_params_fn', lambda rngkey, num_samples: jnp.swapaxes(
             jnp.broadcast_to(mech_params,
                              (num_samples,) + mech_params.shape), 1, 0))
 

@@ -15,7 +15,7 @@ from epi_forecast_stat_mech.sparse_estimator import SparseEstimator
 from epi_forecast_stat_mech.stat_mech_estimator import StatMechEstimator
 
 
-def get_estimator_dict():
+def get_simple_estimator_dict():
   estimator_dict = {}
   modules = [
       rtlive, iterative_estimator, sparse_estimator, stat_mech_estimator,
@@ -31,4 +31,11 @@ def get_meta_estimator_dict(validation_time=14):
   modules = [ariadne_estimator]
   for module in modules:
     estimator_dict.update(module.get_estimator_dict(validation_time))
+  return estimator_dict
+
+
+def get_estimator_dict():
+  estimator_dict = get_simple_estimator_dict()
+  meta_estimator_dict = get_meta_estimator_dict(validation_time=14)
+  estimator_dict.update(meta_estimator_dict)
   return estimator_dict

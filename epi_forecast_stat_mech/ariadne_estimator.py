@@ -40,7 +40,7 @@ def _helper_sample_mech_params(rngkey, num_samples, initial_mech_params,
       num_params) representing the mechanistic parameters to use for each
       location/rollout.
   """
-  param_dist = rand_fun(loc=initial_mech_params, scale=scale)
+  param_dist = rand_fun(loc=initial_mech_params, scale=jnp.exp(scale))
   params_sample_location_param = param_dist.sample(num_samples, seed=rngkey)
   params = jnp.swapaxes(params_sample_location_param, 1, 0)
   return params
@@ -347,7 +347,7 @@ class AriadneEstimator(estimator_base.Estimator):
   def predict(self, test_data):
     """Predict using new scale parameters."""
     self._check_trained()
-    self.small_estimator.sample_mech_params_fn = functools.partial(
+    self.jesm_estimator.sample_mech_params_fn = functools.partial(
         _helper_sample_mech_params,
         initial_mech_params=self.small_estimator.mech_params,
         scale=self.scale_params,
@@ -365,12 +365,13 @@ def get_estimator_dict(
     num_samples=100,
     fit_all=True):
   estimator_dict = {}
-  small_estimators = high_level.get_estimator_dict()
-  for small_estimator in small_estimators.keys():
+  small_estimators = high_level.get_simple_estimator_dict()
+  for name, small_estimator in small_estimators.items():
     if hasattr(small_estimator, 'mech_model'):
-      estimator_dict['AE_'+small_estimator] = AriadneEstimator(small_estimator,
-                                                               validation_time,
-                                                               train_steps,
-                                                               num_samples,
-                                                               fit_all)
+      estimator_dict['AE_' + name] = AriadneEstimator(
+          jesm_estimator=small_estimator,
+          validation_time=validation_time,
+          train_steps=train_steps,
+          num_samples=num_samples,
+          fit_all=fit_all)
   return estimator_dict

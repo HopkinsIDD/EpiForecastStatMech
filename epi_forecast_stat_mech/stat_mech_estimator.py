@@ -180,7 +180,7 @@ class StatMechEstimator(estimator_base.Estimator):
     _, mech_params = self.params_
 
     sample_mech_params_fn = getattr(
-        self, "mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
+        self, "sample_mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
             jnp.broadcast_to(mech_params,
                              (num_samples,) + mech_params.shape), 1, 0))
 
