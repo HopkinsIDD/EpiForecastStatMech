@@ -117,3 +117,14 @@ class NormalDistributionModel(base.StatisticalModel):
     return jax.tree_multimap(
         lambda l, s: tfd.Normal(loc=l, scale=s),
         unpack_fn(loc), unpack_fn(scale))
+
+  def linear_coefficients(self, parameters):
+    dense_name = [x for x in parameters.keys() if "Dense" in x][0]
+    kernel = parameters[dense_name]["kernel"]
+    bias = parameters[dense_name]["bias"]
+    if self.fixed_scale is None:
+      kernel, _ = jnp.split(kernel, 2, -1)
+      bias, _ = jnp.split(bias, 2, -1)
+    return kernel, bias
+
+
