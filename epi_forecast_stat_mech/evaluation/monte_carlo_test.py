@@ -41,26 +41,28 @@ class MonteCarloTest(parameterized.TestCase):
 
   @parameterized.parameters(
       dict(
-          rollout_shape=(100,),
-          params_shape=([np.array([3, 2])], np.array([3, 12])),
-          nsamples=79,
-          seed=0),
-      dict(
           rollout_shape=(13, 14, 15),
-          params_shape=np.array([14, 15]),
+          params_shape=np.array([14, 23, 15]),
           nsamples=23,
-          seed=1))
+          seed=1),
+      dict(
+          rollout_shape=(100,),
+          params_shape=(np.array([3, 79, 2]), np.array([3, 79, 12])),
+          nsamples=79,
+          seed=0)
+      )
   def testTrajectoriesShape(self, rollout_shape, params_shape, nsamples, seed):
-
-    def rollout_fn(rng, parameters):
+    """Test that we can rollout an arbitrary shape."""
+    def rollout_fn(rng, parameters, obs):
       del parameters  # unused
+      del obs  #  unused
       return jax.random.normal(rng, rollout_shape)
 
     rng = jax.random.PRNGKey(seed)
     params = jax.tree_map(jnp.ones, params_shape)
+    obs = jax.tree_map(jnp.zeros, params_shape)
     nlocations = jax.tree_leaves(params)[0].shape[0]
-    trajectories = monte_carlo.trajectories(rollout_fn, rng, params, nlocations,
-                                            nsamples)
+    trajectories = monte_carlo.trajectories(rollout_fn, rng, (params, obs))
     batch_size = jax.tree_leaves(params)[0].shape[0]
     expected_shape = (batch_size, nsamples) + rollout_shape
     self.assertEqual(expected_shape, trajectories.shape)
@@ -84,11 +86,10 @@ class MonteCarloTest(parameterized.TestCase):
                                      nsamples, seed, include_observed):
     model = mechanistic_models.ViboudChowellModel()
     rng0, rng1, rng2 = jax.random.split(jax.random.PRNGKey(seed), 3)
-    params = tfd.Poisson(30).sample([batch_size, 4], seed=rng0)
+    params = tfd.Poisson(30).sample([batch_size, nsamples, 4], seed=rng0)
     epidemics = DummyEpidemicsRecord.build(rng1, batch_size, time_steps)
     trajectories = monte_carlo.trajectories_from_model(model, params, rng2,
                                                        epidemics, time_steps,
-                                                       nsamples,
                                                        include_observed)
     expected_shape = (batch_size, nsamples, final_size)
     self.assertEqual(expected_shape, trajectories.shape)

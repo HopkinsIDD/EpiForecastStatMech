@@ -23,7 +23,8 @@ def create_synthetic_dataset(
     num_epidemics=50,
     num_important_cov=1,
     num_unimportant_cov=2,
-    num_time_steps=100,
+    train_length=100,
+    prediction_length=10,
 ):
   """Creates synthetic data."""
   np.random.seed(seed)  # TODO(shoyer): use np.random.RandomState
@@ -34,9 +35,12 @@ def create_synthetic_dataset(
   trajectories = sir_sim.generate_simulations(
       beta_fn,
       num_epidemics,
-      num_time_steps=num_time_steps)
+      num_time_steps=train_length+prediction_length)
 
-  return trajectories
+  train_data, test_data = run_on_data.train_test_split_time(
+      trajectories, trajectories.time[-prediction_length])
+
+  return train_data, test_data
 
 
 def create_synthetic_dynamic_dataset(
@@ -58,7 +62,11 @@ def create_synthetic_dynamic_dataset(
   data = data.sel(
       time=((data.new_infections.sum('location') >= 1).cumsum('time') >= 1))
   data = data.sel(location=(data.new_infections.sum('time') >= 100))
-  return data
+
+  train_data, test_data = run_on_data.train_test_split_time(
+      data, data.canonical_split_time)
+
+  return train_data, test_data
 
 
 class TestHighLevelStatMech(absltest.TestCase):
@@ -66,17 +74,16 @@ class TestHighLevelStatMech(absltest.TestCase):
 
   def test_StatMechEstimator(self):
     """Verify we can fit and predict from StatMechEstimator."""
-    prediction_length = 10
     num_samples = 11 # number of 'roll out' samples.
 
-    data = create_synthetic_dataset(num_time_steps=100)
-    estimator = high_level.StatMechEstimator(train_steps=1000).fit(data)
+    train_data, test_data = create_synthetic_dataset()
+    estimator = high_level.StatMechEstimator(train_steps=1000).fit(train_data)
 
     _ = estimator.mech_params.to_netcdf()
-    predictions = estimator.predict(prediction_length, num_samples)
+    predictions = estimator.predict(test_data, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, prediction_length)
-    np.testing.assert_array_equal(data.location, predictions.location)
+    np.testing.assert_array_equal(predictions.time, test_data.time)
+    np.testing.assert_array_equal(train_data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
 
 
@@ -85,16 +92,15 @@ class TestHighLevelRtLive(absltest.TestCase):
 
   def test_RtLiveEstimator(self):
     """Verify we can fit and predict from RtLiveEstimator."""
-    prediction_length = 10
     num_samples = 11 # number of 'roll out' samples.
 
-    data = create_synthetic_dataset(num_time_steps=100)
-    estimator = high_level.RtLiveEstimator(gamma=1.0).fit(data)
+    train_data, test_data = create_synthetic_dataset()
+    estimator = high_level.RtLiveEstimator(gamma=1.0).fit(train_data)
 
-    predictions = estimator.predict(prediction_length, num_samples)
+    predictions = estimator.predict(test_data, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, prediction_length)
-    np.testing.assert_array_equal(data.location, predictions.location)
+    np.testing.assert_array_equal(predictions.time, test_data.time)
+    np.testing.assert_array_equal(train_data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
 
 
@@ -120,24 +126,24 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
     Args:
       estimator_name: a key into high_level.get_estimator_dict().
     """
-    prediction_length = 10
     num_samples = 11  # number of 'roll out' samples.
 
-    data = create_synthetic_dataset(num_time_steps=100)
+    train_data, test_data = create_synthetic_dataset()
     estimator = high_level.get_estimator_dict()[estimator_name]
-    estimator.fit(data)
+    estimator.fit(train_data)
 
     _ = estimator.mech_params.to_netcdf()
     _ = estimator.mech_params_hat.to_netcdf()
-    predictions = estimator.predict(prediction_length, num_samples)
+    predictions = estimator.predict(test_data, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, prediction_length)
-    np.testing.assert_array_equal(data.location, predictions.location)
+    np.testing.assert_array_equal(predictions.time, test_data.time)
+    np.testing.assert_array_equal(train_data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
 
   @parameterized.parameters(
       dict(estimator_name='None_VC_Linear'),
       dict(estimator_name='Laplace_Gaussian_PL_Linear'),
+      dict(estimator_name='None_BaselineSEIR_Linear'),
   )
   def test_EstimatorDictEstimatorWithCoef(self, estimator_name):
     """Verify we can fit and predict from the named estimator.
@@ -147,25 +153,25 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
     Args:
       estimator_name: a key into high_level.get_estimator_dict().
     """
-    prediction_length = 10
     num_samples = 11  # number of 'roll out' samples.
 
-    data = create_synthetic_dataset(num_time_steps=100)
+    train_data, test_data = create_synthetic_dataset()
     estimator = high_level.get_estimator_dict()[estimator_name]
-    estimator.fit(data)
+    estimator.fit(train_data)
 
     _ = estimator.alpha.to_netcdf()
     _ = estimator.intercept.to_netcdf()
     _ = estimator.mech_params.to_netcdf()
-    predictions = estimator.predict(prediction_length, num_samples)
+    predictions = estimator.predict(test_data, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, prediction_length)
-    np.testing.assert_array_equal(data.location, predictions.location)
+    np.testing.assert_array_equal(predictions.time, test_data.time)
+    np.testing.assert_array_equal(train_data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
 
   @parameterized.parameters(
       dict(estimator_name='iterative_mean__DynamicMultiplicative'),
       dict(estimator_name='iterative_randomforest__DynamicMultiplicative'),
+      dict(estimator_name='iterative_mean__DynamicBaselineSEIRModel'),
   )
   def test_DynamicEstimatorDictEstimator(self, estimator_name):
     """Verify we can fit and predict from the named estimator.
@@ -177,19 +183,16 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
     """
     num_samples = 11
 
-    data = create_synthetic_dynamic_dataset()
-    train, _ = run_on_data.train_test_split_time(data,
-                                                 data.canonical_split_time)
-    estimator = high_level.get_dynamic_estimator_dict()[estimator_name]
-    estimator.fit(train)
+    train_data, test_data = create_synthetic_dynamic_dataset()
+    estimator = high_level.get_estimator_dict()[estimator_name]
+    estimator.fit(train_data)
 
     _ = estimator.mech_params.to_netcdf()
     _ = estimator.mech_params_hat.to_netcdf()
-    predictions = estimator.predict(
-        data.dynamic_covariates, num_samples, include_observed=False)
+    predictions = estimator.predict(test_data, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, data.sizes['time'] - train.sizes['time'])
-    np.testing.assert_array_equal(data.location, predictions.location)
+    np.testing.assert_array_equal(predictions.time, test_data.time)
+    np.testing.assert_array_equal(train_data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
 
 

@@ -17,20 +17,19 @@ class TestHighLevelSparseEstimator(absltest.TestCase):
 
   def test_SparseEstimator(self):
     """Verify we can fit and predict from SparseEstimator."""
-    prediction_length = 10
     num_samples = 11 # number of 'roll out' samples.
 
-    data = test_high_level.create_synthetic_dataset(num_time_steps=100)
+    train_data, test_data = test_high_level.create_synthetic_dataset()
     # These arguments are chosen to make the test faster.
     estimator = sparse_estimator.SparseEstimator(
         initializer=sparse.predefined_constant_initializer,
         optimizer=functools.partial(sparse._adam_optim, max_iter=10),
         penalty_factor_grid=np.exp(
-            np.linspace(np.log(.1), np.log(1000.), num=5))).fit(data)
-    predictions = estimator.predict(prediction_length, num_samples)
+            np.linspace(np.log(.1), np.log(1000.), num=5))).fit(train_data)
+    predictions = estimator.predict(test_data, num_samples)
     self.assertCountEqual(['location', 'sample', 'time'], predictions.dims)
-    self.assertLen(predictions.time, prediction_length)
-    np.testing.assert_array_equal(data.location, predictions.location)
+    np.testing.assert_array_equal(predictions.time, test_data.time)
+    np.testing.assert_array_equal(train_data.location, predictions.location)
     self.assertLen(predictions.sample, num_samples)
     _ = estimator.alpha.to_netcdf()
     _ = estimator.intercept.to_netcdf()

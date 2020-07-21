@@ -381,24 +381,42 @@ def calculate_infection_sums(ds):
   return ds
 
 
+def _get_delta(series):
+  """Returns the (assumed uniform) spacing between consecutive entries."""
+  return np.diff(series.values[:2])[0]
+
+
 def datetime_to_int(date, ds=None):
+  """Convert datetimes to integer date indices."""
   if ds is None:
     return (date - TIME_ZERO) // np.timedelta64(1, 'D')
   if not hasattr(ds, 'original_time'):
     raise ValueError('Dataset with no original_time cannot be used to '
                      'convert datetimes to ints.')
-  int_time = xr.DataArray(
-      ds.time.values, dims=('original_time',), coords=[ds.original_time.values])
-  return int_time.sel(original_time=date)
+  first_int = ds.time.values[0]
+  delta_int = _get_delta(ds.time)
+  first_date = ds.original_time.values[0]
+  delta_date = _get_delta(ds.original_time)
+  result = first_int + ((date - first_date) / delta_date) * delta_int
+  if hasattr(result, 'dtype'):
+    result = result.astype(int)
+  else:
+    result = int(result)
+  return result
 
 
 def int_to_datetime(int_date, ds=None):
+  """Convert integer date indices to datetimes."""
   if ds is None:
     return TIME_ZERO + int_date * np.timedelta64(1, 'D')
   if not hasattr(ds, 'original_time'):
     raise ValueError('Dataset with no original_time cannot be used to '
                      'convert ints to datetimes.')
-  return ds.original_time.sel(time=int_date)
+  first_int = ds.time.values[0]
+  delta_int = _get_delta(ds.time)
+  first_date = ds.original_time.values[0]
+  delta_date = _get_delta(ds.original_time)
+  return first_date + ((int_date - first_int) / delta_int) * delta_date
 
 
 def compute_integer_time(trajectories):

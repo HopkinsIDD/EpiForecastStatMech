@@ -3,6 +3,7 @@
 
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 import numpy as np
 import pandas as pd
 import scipy.stats as sps
@@ -108,7 +109,7 @@ class RtLiveEstimator(estimator_base.Estimator):
     self.latest_k = sr.iloc[-1]
     return self
 
-  def predict(self, time_steps, num_samples, seed=0) -> xr.DataArray:
+  def predict(self, test_data, num_samples, seed=0) -> xr.DataArray:
     np.random.seed(seed)
     ks = [np.stack([self.latest_k.values] * num_samples, axis=-1)]
 
@@ -120,7 +121,7 @@ class RtLiveEstimator(estimator_base.Estimator):
               self.r_t_range, p=self.posterior[loc], size=num_samples))
     rts = pd.DataFrame(rts, index=self.posterior.columns)
 
-    for _ in range(time_steps):
+    for _ in test_data.time:
       # Sample number of new cases today.
       lam = ks[-1] * np.exp(self.GAMMA * (rts - 1))
       lam = np.minimum(lam, MAX_LAMBDA)
@@ -133,18 +134,11 @@ class RtLiveEstimator(estimator_base.Estimator):
             np.random.choice(self.r_t_range, p=self.process_matrix[rt]))
       rts = pd.DataFrame(np.array(new_rts).reshape(rts.shape), index=rts.index)
 
-    if isinstance(self.latest_k.name, np.number):
-      dates = [self.latest_k.name + i for i in range(time_steps + 1)]
-    else:
-      dates = [
-          self.latest_k.name + pd.Timedelta(i, 'D')
-          for i in range(time_steps + 1)
-      ]
-    return xr.DataArray(
-        ks[1:],
-        coords=(dates[1:], self.latest_k.index, range(num_samples)),
-        dims=('time', self.latest_k.index.name,
-              'sample')).rename('new_infections')
+    # Switch from time-location-sample to location-sample-time axis order.
+    predictions = np.transpose(np.array(ks[1:]), axes=(1, 2, 0))
+    locations = self.latest_k.index
+    return predict_lib.wrap_predictions(predictions, locations, num_samples,
+                                        test_data.time)
 
 
 def get_estimator_dict():

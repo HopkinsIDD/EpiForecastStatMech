@@ -17,6 +17,7 @@ import xarray
 
 from epi_forecast_stat_mech import data_model
 from epi_forecast_stat_mech import estimator_base
+from epi_forecast_stat_mech import mask_time
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import probability as stat_prob
@@ -34,15 +35,6 @@ def load(file_in):
   return pickle.load(file_in)
 
 
-def _get_time_mask(data, min_value=1):
-  """Masks times while total number of infections is less than `min_value`."""
-  new_infections = data.new_infections.transpose('location', 'time')
-  total = new_infections.cumsum('time', skipna=True)
-  mask = np.asarray((total >= min_value) & (~new_infections.isnull())).astype(
-      np.float32)
-  return mask
-
-
 class IterativeEstimator(estimator_base.Estimator):
 
   def save(self, file_out):
@@ -55,7 +47,9 @@ class IterativeEstimator(estimator_base.Estimator):
                iter_max=100,
                gradient_steps=10000,
                learning_rate=1E-4,
-               verbose=1):
+               verbose=1,
+               time_mask_fn=functools.partial(mask_time.make_mask, min_value=1),
+               ):
     """Construct an IterativeEstimator.
 
     Args:
@@ -75,6 +69,8 @@ class IterativeEstimator(estimator_base.Estimator):
         0: Quiet.
         1: Reports every 1k steps.
         2: Also report initial value and gradient.
+      time_mask_fn: A function that returns a np.array that can be used to mask
+        part of the new_infections curve.
     """
     if stat_estimators is None:
       stat_estimators = collections.defaultdict(
@@ -91,6 +87,7 @@ class IterativeEstimator(estimator_base.Estimator):
     self.encoded_param_names = self.mech_model.encoded_param_names
     self.mech_bottom_scale = self.mech_model.bottom_scale
     self.out_dim = len(self.encoded_param_names)
+    self.time_mask_fn = time_mask_fn
 
   def _unflatten(self, x):
     return jnp.reshape(x, (-1, self.out_dim))
@@ -101,7 +98,7 @@ class IterativeEstimator(estimator_base.Estimator):
     num_locations = data.sizes['location']
     self.epidemics = epidemics = mechanistic_models.pack_epidemics_record_tuple(
         data)
-    self.time_mask = time_mask = _get_time_mask(data)
+    self.time_mask = time_mask = self.time_mask_fn(data)
     self.v_df = v_df = _get_static_covariate_df(data)
 
     def mech_plus_stat_errors(mech_params_stack, mech_params_hat_stack=None):
@@ -204,13 +201,20 @@ class IterativeEstimator(estimator_base.Estimator):
       fig.tight_layout()
       plt.show()
 
-  def predict(self, time_steps, num_samples, seed=0):
+  def predict(self, test_data, num_samples, seed=0):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
     mech_params = self.mech_params_stack
+
+    sample_mech_params_fn = getattr(
+        self, "sample_mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
+            jnp.broadcast_to(mech_params,
+                             (num_samples,) + mech_params.shape), 1, 0))
+
     return predict_lib.simulate_predictions(self.mech_model, mech_params,
                                             self.data, self.epidemics,
-                                            time_steps, num_samples, rng)
+                                            test_data, num_samples, rng,
+                                            sample_mech_params_fn)
 
   @property
   def mech_params(self):

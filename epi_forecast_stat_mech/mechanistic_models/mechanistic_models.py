@@ -511,6 +511,24 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
     """See base class."""
     return {"epidemic_size": parameters[..., -1:]}
 
+  # These are kind of a compatibility layer thing.
+  @property
+  def param_names(self):
+    return self.step_based_param_names
+
+  @property
+  def encoded_param_names(self):
+    return self.step_based_encoded_param_names
+
+  def decode_params(self, parameters):
+    return jnp.exp(jnp.asarray(parameters))
+
+  def log_prior(self, parameters):
+    """Returns log_probability prior of the `parameters` of the model."""
+    return jnp.zeros_like(parameters)
+
+
+
 
 # TODO(jamieas): unify VC and Gaussian models as subclasses of `IntensityModel`.
 # TODO(dkochkov) add pytype annotations, refer to decided `EpidemicsRecord`.
@@ -913,3 +931,131 @@ class DynamicMultiplicativeGrowthModel(DynamicIntensityModel,
       log_beta = log_beta_module(x)
       log_K = log_K_module(x)
       return jnp.concatenate((log_base, log_beta, log_K), axis=-1)
+
+
+def discrete_seir_update(susceptible, exposed, infected, exposure_rate,
+                         symptom_rate, recovery_rate):
+  """All quantities are in per-population units."""
+  new_exposures = exposure_rate * susceptible * infected
+  new_infections = symptom_rate * exposed
+  new_recoveries = recovery_rate * infected
+  return (susceptible - new_exposures, exposed + new_exposures - new_infections,
+          infected + new_infections - new_recoveries)
+
+
+class StepBasedBaselineSEIRModel(IntensityModel):
+  """Baseline SEIR mechanistic model."""
+
+  new_infection_distribution: Callable = FastPoisson
+
+  @property
+  def step_based_param_names(self):
+    return ("exposure_rate", "symptom_rate", "recovery_rate", "K")
+
+  def encode_params(self, parameters):
+    return jnp.log(parameters)
+
+  @property
+  def step_based_encoded_param_names(self):
+    return ("log_exposure_rate", "log_symptom_rate", "log_recovery_rate",
+            "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((.1, .1, .1, .1))
+
+  def _split_and_scale_parameters(self, parameters):
+    """Splits parameters and scales them appropriately.
+
+
+    Args:
+      parameters: array containing parametrization of the model.
+
+    Returns:
+      (exposure_rate, symptom_rate, recovery_rate, K) parameters.
+    """
+    tuple_form = (exposure_rate, symptom_rate, recovery_rate,
+                  K) = jnp.exp(parameters)
+    return tuple_form
+
+  def init_parameters(self):
+    """Returns reasonable `parameters` for an initial guess."""
+    return self.encode_params(jnp.asarray([0.5, 0.3, 0.3, 10000.]))
+
+  def _initial_state(self, parameters, initial_record):
+    """Initializes the hidden state of the model based on initial data."""
+    del parameters  # unused
+    # Hidden state is (susceptible, exposed, infected) in per-population units.
+    # TODO(mcoram): Consider making initial log_infected_frac a parameter.
+    return (0.999, 0., 0.001)
+
+  def _update_state(self, parameters, state, unused_new_infections):
+    """Computes an update to the internal state of the model."""
+    susceptible, exposed, infected = state
+    exposure_rate, symptom_rate, recovery_rate, K = self._split_and_scale_parameters(
+        parameters)
+    new_susceptible, new_exposed, new_infected = discrete_seir_update(
+        susceptible, exposed, infected, exposure_rate, symptom_rate,
+        recovery_rate)
+    return new_susceptible, new_exposed, new_infected
+
+  def _intensity(self, parameters, state):
+    """Computes intensity given `parameters`, `state`."""
+    unused_susceptible, exposed, unused_infected = state
+    (unused_exposure_rate, symptom_rate, unused_recovery_rate,
+     K) = self._split_and_scale_parameters(parameters)
+    # Observe that K folds together population and observation_rate.
+    # Return a singleton tuple holding a float for the Poisson parameter.
+    return (jnp.maximum(K * symptom_rate * exposed, 0.1),)
+
+  def epidemic_observables(self, parameters, epidemics):
+    """See base class."""
+    return {"epidemic_size": parameters[..., -1:]}
+
+  # These are kind of a compatibility layer thing.
+  @property
+  def param_names(self):
+    return self.step_based_param_names
+
+  @property
+  def encoded_param_names(self):
+    return self.step_based_encoded_param_names
+
+  def decode_params(self, parameters):
+    return jnp.exp(jnp.asarray(parameters))
+
+  def log_prior(self, parameters):
+    """Returns log_probability prior of the `parameters` of the model."""
+    return jnp.zeros_like(parameters)
+
+
+class DynamicBaselineSEIRModel(DynamicIntensityModel,
+                               StepBasedBaselineSEIRModel):
+  """BaselineSEIR mechanistic model with dynamic variable utilization."""
+
+  def __init__(self, rng, dynamic_covariate):
+    self.bottom_scale_dict = collections.defaultdict(lambda: 0.1)
+    super().__init__(rng, dynamic_covariate)
+
+  class DynamicModule(nn.Module):
+
+    def apply(self, x):
+      # exposure_rate, symptom_rate, recovery_rate, K
+      log_exposure_rate_module = ConstantModule.partial(
+          name="log_exposure_rate", init=jnp.reshape(jnp.log(0.5), (1,)))
+      log_symptom_rate_module = nn.Dense.partial(
+          name="log_symptom_rate",
+          features=1,
+          kernel_init=flax.nn.initializers.zeros,
+          bias_init=constant_initializer(jnp.log(0.3)))
+      log_recovery_rate_module = ConstantModule.partial(
+          name="log_recovery_rate", init=jnp.reshape(jnp.log(0.3), (1,)))
+      log_K_module = ConstantModule.partial(
+          name="log_K", init=jnp.reshape(jnp.log(10000.), (1,)))
+      log_exposure_rate = log_exposure_rate_module(x)
+      log_symptom_rate = log_symptom_rate_module(x)
+      log_recovery_rate = log_recovery_rate_module(x)
+      log_K = log_K_module(x)
+      return jnp.concatenate(
+          (log_exposure_rate, log_symptom_rate, log_recovery_rate, log_K),
+          axis=-1)

@@ -22,20 +22,24 @@ def train_test_split_time(data, split_day):
   # everything after split_day
   test_data = data.sel(time=slice(split_day, None)).copy()
   # drop all variables that won't exist on real test data
-  test_covariates = test_data[['location', 'time', 'static_covariate']]
-  test_covariates['static_covariates'] = data['static_covariates']
+  things_included = ['location', 'time']
+  if hasattr(test_data, 'dynamic_covariates'):
+    things_included.append('dynamic_covariates')
+  if 'original_time' in test_data.data_vars.keys():
+    things_included.append('original_time')
+  test_data = test_data[things_included]
 
   train_data.attrs['split'] = 'train'
   train_data.attrs['split_spec'] = 'train_test_split_time'
-  test_covariates.attrs['split'] = 'test'
-  test_covariates.attrs['split_spec'] = 'train_test_split_time'
+  test_data.attrs['split'] = 'test'
+  test_data.attrs['split_spec'] = 'train_test_split_time'
 
   # datetime64 is not serializable as an attribute, causing to_netcdf to crash
   # if we include it in attrs. However, making it a variable works :-/.
   train_data = train_data.assign(split_day=split_day)
-  test_covariates = test_covariates.assign(split_day=split_day)
+  test_data = test_data.assign(split_day=split_day)
 
-  return train_data, test_covariates
+  return train_data, test_data
 
 
 def shard_locations_randomly(data, num_shards=5, seed=0):

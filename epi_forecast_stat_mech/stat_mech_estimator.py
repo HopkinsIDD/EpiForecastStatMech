@@ -5,6 +5,7 @@ import dataclasses
 import functools
 import itertools
 import logging
+from typing import Callable
 
 import jax
 from jax.experimental import optimizers
@@ -18,6 +19,7 @@ tfd = tfp.distributions
 
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech import mask_time  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
@@ -32,15 +34,6 @@ LogLikelihoods = collections.namedtuple(
      "stat_log_likelihood"])
 
 
-def _get_time_mask(data, min_value=1):
-  """Masks times while total number of infections is less than `min_value`."""
-  new_infections = data.new_infections.transpose("location", "time")
-  total = new_infections.cumsum("time", skipna=True)
-  mask = np.asarray((total >= min_value) & (~new_infections.isnull())).astype(
-      np.float32)
-  return mask
-
-
 @dataclasses.dataclass
 class StatMechEstimator(estimator_base.Estimator):
   """A place-holder model that uses a mixed statistical/mechanistic approach."""
@@ -52,7 +45,8 @@ class StatMechEstimator(estimator_base.Estimator):
       default_factory=mechanistic_models.ViboudChowellModel)
   fused_train_steps: int = 100
   # TODO(mcoram): Resolve whether the "30" is deprecated hack or still useful.
-  time_mask_value: int = 30
+  time_mask_fn: Callable[..., np.array] = functools.partial(
+      mask_time.make_mask, min_value=30)
   fit_seed: int = 42
 
   def _log_likelihoods(
@@ -100,7 +94,6 @@ class StatMechEstimator(estimator_base.Estimator):
 
   def fit(self, data):
     train_steps = self.train_steps
-    time_mask_value = self.time_mask_value
     seed = self.fit_seed
     data_model.validate_data_for_fit(data)
     # TODO(dkochkov) consider a tunable module for preprocessing.
@@ -113,7 +106,7 @@ class StatMechEstimator(estimator_base.Estimator):
         "location", "static_covariate").values
     self.epidemics = epidemics = (
         mechanistic_models.pack_epidemics_record_tuple(data))
-    self.time_mask = _get_time_mask(data, time_mask_value)
+    self.time_mask = self.time_mask_fn(data)
 
     # Mechanistic model initialization
     mech_params = jnp.stack([
@@ -173,14 +166,21 @@ class StatMechEstimator(estimator_base.Estimator):
     if not hasattr(self, "params_"):
       raise AttributeError("`fit` must be called before `predict`.")
 
-  def predict(self, time_steps, num_samples, seed=0):
+  def predict(self, test_data, num_samples, seed=0):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
-    # Should mech_params be sampled from a distribution instead?
+
     _, mech_params = self.params_
+
+    sample_mech_params_fn = getattr(
+        self, "sample_mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
+            jnp.broadcast_to(mech_params,
+                             (num_samples,) + mech_params.shape), 1, 0))
+
     return predict_lib.simulate_predictions(self.mech_model, mech_params,
                                             self.data, self.epidemics,
-                                            time_steps, num_samples, rng)
+                                            test_data, num_samples, rng,
+                                            sample_mech_params_fn)
 
   @property
   def mech_params(self):
@@ -253,18 +253,20 @@ def laplace_prior(parameters, scale_parameter=1.):
 def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
-    time_mask_value=50,
+    time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
     fit_seed=42,
     list_of_prior_fns=(None, laplace_prior),
     list_of_mech_models=(mechanistic_models.ViboudChowellModel,
                          mechanistic_models.GaussianModel,
                          mechanistic_models.ViboudChowellModelPseudoLikelihood,
                          mechanistic_models.GaussianModelPseudoLikelihood,
-                         ),
+                         mechanistic_models.StepBasedMultiplicativeGrowthModel,
+                         mechanistic_models.StepBasedBaselineSEIRModel),
     list_of_stat_module=(network_models.LinearModule,
                          network_models.PerceptronModule),
     list_of_prior_names=("None", "Laplace"),
-    list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL"),
+    list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
+                        "MultiplicativeGrowth", "BaselineSEIR"),
     list_of_stat_names=("Linear", "MLP")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
@@ -292,6 +294,6 @@ def get_estimator_dict(
         stat_model=stat_model,
         mech_model=mech_model,
         fused_train_steps=fused_train_steps,
-        time_mask_value=time_mask_value,
+        time_mask_fn=time_mask_fn,
         fit_seed=fit_seed)
   return estimator_dictionary
