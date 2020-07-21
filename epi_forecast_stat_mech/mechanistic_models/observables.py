@@ -34,12 +34,23 @@ class InternalParams(Observables):
                     jnp.split(mech_params, len(mech_params))))
 
 
+class AllDefinedObservables(Observables):
+
+  def observables(self, mech_model, mech_params, epidemic):
+    d1 = dict(
+        zip(mech_model.encoded_param_names,
+            jnp.split(mech_params, len(mech_params))))
+    d2 = mech_model.epidemic_observables(mech_params, epidemic)
+    d1.update(d2)
+    return d1
+
+
 class ObserveSpecified(Observables):
 
   def __init__(self, specified_internal_params):
     self._specified_internal_params = specified_internal_params
 
   def observables(self, mech_model, mech_params, epidemic):
-    encoded_dict = InternalParams().observables(mech_model, mech_params,
-                                                epidemic)
+    encoded_dict = AllDefinedObservables().observables(mech_model, mech_params,
+                                                       epidemic)
     return {key: encoded_dict[key] for key in self._specified_internal_params}

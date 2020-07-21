@@ -185,6 +185,10 @@ class MechanisticModel:
   def encode_params(self, parameters):
     ...
 
+  def epidemic_observables(self, parameters, epidemics):
+    """Optionally return quantities that we may wish to constrain."""
+    return {}
+
 
 # TODO(dkochkov) Consider adding rng to the state transition method.
 @dataclasses.dataclass
@@ -300,6 +304,9 @@ class IntensityModel(MechanisticModel):
       return jnp.concatenate([observed_cases, unroll])
     return unroll
 
+  def epidemic_observables(self, parameters, epidemics):
+    """Optionally return quantities that we may wish to constrain."""
+    return {}
 
 class StepBasedViboudChowellModel(IntensityModel):
   """ViboudChowell mechanistic model."""
@@ -501,8 +508,6 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
     return jnp.zeros_like(parameters)
 
 
-
-
 # TODO(jamieas): unify VC and Gaussian models as subclasses of `IntensityModel`.
 # TODO(dkochkov) add pytype annotations, refer to decided `EpidemicsRecord`.
 # TODO(dkochkov) consider moving paramteres to flax params.
@@ -604,6 +609,22 @@ class ViboudChowellModel(MechanisticModel):
     if include_observed:
       return jnp.concatenate([observed_epidemics.infections_over_time, unroll])
     return unroll
+
+  def characteristic_time(self, parameters):
+    r, a, p, k = self.decode_params(parameters)
+    return r * k ** (p - 1.)
+
+  def characteristic_height(self, parameters):
+    r, a, p, k = self.decode_params(parameters)
+    return r * k ** (p - 1.) * p ** p * a ** a / (p + a) ** (p + a)
+
+  def epidemic_observables(self, parameters, epidemics):
+    return {
+        "log_characteristic_time":
+            jnp.log(self.characteristic_time(parameters))[jnp.newaxis],
+        "log_characteristic_height":
+            jnp.log(self.characteristic_height(parameters))[jnp.newaxis],
+    }
 
 
 @dataclasses.dataclass

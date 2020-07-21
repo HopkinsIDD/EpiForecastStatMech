@@ -308,4 +308,17 @@ def get_estimator_dict(
         time_mask_fn=time_mask_fn,
         fit_seed=fit_seed,
         observable_choice=observable_choice)
+  estimator_dictionary["Laplace_VC_Linear_ObsChar1"] = StatMechEstimator(
+      train_steps=train_steps,
+      stat_model=network_models.NormalDistributionModel(
+          predict_module=network_models.LinearModule,
+          log_prior_fn=laplace_prior),
+      mech_model=mechanistic_models.ViboudChowellModel(),
+      fused_train_steps=fused_train_steps,
+      time_mask_fn=time_mask_fn,
+      fit_seed=fit_seed,
+      observable_choice=observables.ObserveSpecified([
+          "log_r", "log_a", "log_characteristic_time",
+          "log_characteristic_height"
+      ]))
   return estimator_dictionary
