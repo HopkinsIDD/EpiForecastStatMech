@@ -143,7 +143,7 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
   @parameterized.parameters(
       dict(estimator_name='None_VC_Linear'),
       dict(estimator_name='Laplace_Gaussian_PL_Linear'),
-      dict(estimator_name='None_BaselineSEIR_Linear'),
+      dict(estimator_name='None_VC_Linear_ObsEnc'),
   )
   def test_EstimatorDictEstimatorWithCoef(self, estimator_name):
     """Verify we can fit and predict from the named estimator.
@@ -169,7 +169,6 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
     self.assertLen(predictions.sample, num_samples)
 
   @parameterized.parameters(
-      dict(estimator_name='iterative_mean__DynamicMultiplicative'),
       dict(estimator_name='iterative_randomforest__DynamicMultiplicative'),
       dict(estimator_name='iterative_mean__DynamicBaselineSEIRModel'),
   )

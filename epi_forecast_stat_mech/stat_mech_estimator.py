@@ -21,6 +21,7 @@ from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-or
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import mask_time  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.mechanistic_models import observables  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import network_models  # pylint: disable=g-bad-import-order
@@ -48,6 +49,8 @@ class StatMechEstimator(estimator_base.Estimator):
   time_mask_fn: Callable[..., np.array] = functools.partial(
       mask_time.make_mask, min_value=30)
   fit_seed: int = 42
+  observable_choice: observables.Observables = dataclasses.field(
+      default_factory=lambda: observables.ObserveSpecified(["log_K"]))
 
   def _log_likelihoods(
       self,
@@ -79,8 +82,12 @@ class StatMechEstimator(estimator_base.Estimator):
     statistical_log_prior = stat_model.log_prior(stat_params)
     mechanistic_log_prior = jax.vmap(mech_model.log_prior)(mech_params)
 
-    epidemic_observables_fn = jax.vmap(mech_model.epidemic_observables)
-    epidemic_observables = epidemic_observables_fn(mech_params, epidemics)
+    epidemic_observables_fn = jax.vmap(self.observable_choice.observables,
+                                       [None, 0, 0])
+    epidemic_observables = epidemic_observables_fn(mech_model, mech_params,
+                                                   epidemics)
+    self.epidemic_observables = epidemic_observables
+
     statistical_log_likelihood = stat_model.log_likelihood(
         stat_params, covariates, epidemic_observables)
 
@@ -111,12 +118,15 @@ class StatMechEstimator(estimator_base.Estimator):
     # Mechanistic model initialization
     mech_params = jnp.stack([
         self.mech_model.init_parameters() for _ in range(num_locations)])
-    observations = jax.vmap(self.mech_model.epidemic_observables)(
-        mech_params, epidemics)
+    epidemic_observables_fn = jax.vmap(self.observable_choice.observables,
+                                       [None, 0, 0])
+    epidemic_observables = epidemic_observables_fn(self.mech_model, mech_params,
+                                                   epidemics)
 
     # Statistical model initialization
     rng = jax.random.PRNGKey(seed)
-    stat_params = self.stat_model.init_parameters(rng, covariates, observations)
+    stat_params = self.stat_model.init_parameters(rng, covariates,
+                                                  epidemic_observables)
     init_params = (stat_params, mech_params)
 
     opt_init, opt_update, get_params = optimizers.adam(5e-4, b1=0.9, b2=0.999)
@@ -198,29 +208,19 @@ class StatMechEstimator(estimator_base.Estimator):
 
   @property
   def alpha(self):
+    self._check_fitted()
     if issubclass(self.stat_model.predict_module, network_models.LinearModule):
-      # For the simple case of many_cov2_1_2, these:
-      #   self.params_[0]['Dense_0']['bias']
-      #   self.params_[0]['Dense_0']['kernel']
-      # have shapes: (2,) and (3, 2), apparently (num_static, 2*num_observable).
-      # The observables they are predicting are (for VC) basically K as a column
-      # vector: self.params_[1][..., -1:]
-      # All the existing models seem to do this except StepBasedGaussianModel
-      # which omits the method (bug?).
-      # So why have 2 intercepts and two length 3 alpha-vectors? It appears to
-      # be because network_models.NormalDistributionModel has it's
-      # predict_module emit two params for every observable: loc, raw_scale.
-      # So the first columnn of the kernel should be an alpha for log_K
-      # and the second should be an alpha for log_K_sd (apparently).
-      dense_name = [x for x in self.params_[0].keys() if "Dense" in x][0]
-      kernel = self.params_[0][dense_name]["kernel"]
-      assert kernel.shape[1] == 2, "unexpected kernel shape."
+      kernel, unused_intercept = self.stat_model.linear_coefficients(
+          self.params_[0])
+      assert kernel.shape[1] == len(self.epidemic_observables.keys()), (
+          f"unexpected kernel shape: {kernel.shape[1]} vs "
+          f"{self.epidemic_observables.keys()}")
       alpha = xarray.DataArray(
-          np.asarray(kernel[:, :1]),
+          np.asarray(kernel),
           dims=("static_covariate", "encoded_param"),
           coords=dict(
               static_covariate=self.data.static_covariate,
-              encoded_param=["log_K"]))
+              encoded_param=list(self.epidemic_observables.keys())))
       return alpha
     else:
       raise AttributeError("no alpha method for stat_model: %s" %
@@ -228,20 +228,23 @@ class StatMechEstimator(estimator_base.Estimator):
 
   @property
   def intercept(self):
+    self._check_fitted()
     if issubclass(self.stat_model.predict_module, network_models.LinearModule):
-      # see comments in alpha(self).
-      dense_name = [x for x in self.params_[0].keys() if "Dense" in x][0]
-      bias = self.params_[0][dense_name]["bias"]
-      assert bias.shape == (2,), "unexpected bias shape."
+      unused_kernel, bias = self.stat_model.linear_coefficients(
+          self.params_[0])
+      assert bias.shape == (len(self.epidemic_observables.keys()),), (
+          f"unexpected bias shape: {bias.shape} vs "
+          f"{self.epidemic_observables.keys()}")
       bias = xarray.DataArray(
-          np.asarray(bias[:1]),
+          np.asarray(bias),
           dims=("encoded_param"),
           coords=dict(
-              encoded_param=["log_K"]))
+              encoded_param=list(self.epidemic_observables.keys())))
       return bias
     else:
       raise AttributeError("no intercept method for stat_model: %s" %
                            (self.stat_model.__class__,))
+
 
 def laplace_prior(parameters, scale_parameter=1.):
   return jax.tree_map(
@@ -267,24 +270,32 @@ def get_estimator_dict(
     list_of_prior_names=("None", "Laplace"),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
                         "MultiplicativeGrowth", "BaselineSEIR"),
-    list_of_stat_names=("Linear", "MLP")):
+    list_of_stat_names=("Linear", "MLP"),
+    list_of_observable_choices=(observables.InternalParams(),
+                                observables.ObserveSpecified(["log_K"])),
+    list_of_observable_choices_names=("ObsEnc", "ObsLogK")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
   # hack or still useful.
   # Create an iterator
-  components_iterator = itertools.product(
+  components_iterator = itertools.product(itertools.product(
       itertools.product(list_of_prior_fns, list_of_mech_models),
-      list_of_stat_module)
-  names_iterator = itertools.product(
+      list_of_stat_module), list_of_observable_choices)
+  names_iterator = itertools.product(itertools.product(
       itertools.product(list_of_prior_names, list_of_mech_names),
-      list_of_stat_names)
+      list_of_stat_names), list_of_observable_choices_names)
 
   # Combine into one giant dictionary of predictions
   estimator_dictionary = {}
   for components, name_components in zip(components_iterator, names_iterator):
-    (prior_fn, mech_model_cls), stat_module = components
-    (prior_name, mech_name), stat_name = name_components
-    model_name = "_".join([prior_name, mech_name, stat_name])
+    ((prior_fn, mech_model_cls), stat_module), observable_choice = components
+    (((prior_name, mech_name), stat_name),
+     observable_choice_name) = name_components
+    name_list = [prior_name, mech_name, stat_name, observable_choice_name]
+    # To preserve old names, I'm dropping ObsLogK from the name.
+    if observable_choice_name == "ObsLogK":
+      name_list.pop()
+    model_name = "_".join(name_list)
     stat_model = network_models.NormalDistributionModel(
         predict_module=stat_module,
         log_prior_fn=prior_fn)
@@ -295,5 +306,6 @@ def get_estimator_dict(
         mech_model=mech_model,
         fused_train_steps=fused_train_steps,
         time_mask_fn=time_mask_fn,
-        fit_seed=fit_seed)
+        fit_seed=fit_seed,
+        observable_choice=observable_choice)
   return estimator_dictionary
