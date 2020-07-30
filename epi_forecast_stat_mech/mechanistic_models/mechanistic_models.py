@@ -330,7 +330,12 @@ class StepBasedViboudChowellModel(IntensityModel):
     """Computes intensity given `parameters`, `state`."""
     r, a, p, k = self._split_and_scale_parameters(parameters)
     x = state
-    return (jnp.maximum(r * x ** p * jnp.maximum(1 - (x / k), 1E-6) ** a, 0.1),)
+    return jnp.maximum(
+        r * x**p * jnp.where(
+            x < k,
+            (1. - jnp.where(x < k, x / k, 1.))**a,
+            0.),
+        0.1)
 
   def _update_state(self, parameters, state, new_cases):
     """Computes an update to the internal state of the model."""
@@ -530,9 +535,14 @@ class ViboudChowellModel(MechanisticModel):
     return jnp.stack([a_prior, p_prior], axis=-1)
 
   def intensity(self, parameters, x):
-    """Computes intensity given `parameters` and number of current_cases `x`."""
+    """Computes intensity given `parameters` and number of cumulative_cases."""
     r, a, p, k = self.split_and_scale_parameters(parameters)
-    return jnp.maximum(r * x ** p * (jnp.maximum(1 - x / k, 1E-6)) ** a, 0.1)
+    return jnp.maximum(
+        r * x**p * jnp.where(
+            x < k,
+            (1. - jnp.where(x < k, x / k, 1.))**a,
+            0.),
+        0.1)
 
   def split_and_scale_parameters(self, parameters):
     """Splits parameters and scales them appropriately.
