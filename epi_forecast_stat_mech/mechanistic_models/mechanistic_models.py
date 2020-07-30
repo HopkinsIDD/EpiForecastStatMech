@@ -752,6 +752,24 @@ class ViboudChowellModelPseudoLikelihood(ViboudChowellModel):
 
 
 @dataclasses.dataclass
+class ViboudChowellModelPublished(ViboudChowellModel):
+  """ViboudChowell mechanistic model with a pseudo-likelihood criterion.
+
+  C.f. equation 2 of https://doi.org/10.1016/j.idm.2017.08.001
+  """
+
+  def intensity(self, parameters, x):
+    """Computes intensity given `parameters` and number of cumulative_cases."""
+    r, a, p, k = self.split_and_scale_parameters(parameters)
+    return jnp.maximum(
+        r * x**p * jnp.where(
+            x < k,
+            (1. - jnp.where(x < k, (x / k) ** a, 1.)),
+            0.),
+        0.1)
+
+
+@dataclasses.dataclass
 class GaussianModelPseudoLikelihood(GaussianModel):
   """Mechanistic model of Gaussian shape with a pseudo-likelihood criterion."""
 
