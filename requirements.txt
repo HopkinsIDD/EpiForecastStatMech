@@ -11,6 +11,6 @@ jax
 jaxlib
 glmnet_py
 sklearn
-tensorflow==2.2.0rc1
+tensorflow
 tensorflow_probability
 xarray
