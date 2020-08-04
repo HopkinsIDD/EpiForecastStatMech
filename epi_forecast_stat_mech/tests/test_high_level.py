@@ -143,6 +143,7 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
   @parameterized.parameters(
       dict(estimator_name='Laplace_Gaussian_PL_Linear'),
       dict(estimator_name='None_VC_Linear_ObsEnc'),
+      dict(estimator_name='Laplace_Turner_Linear_ObsEnc'),
   )
   def test_EstimatorDictEstimatorWithCoef(self, estimator_name):
     """Verify we can fit and predict from the named estimator.

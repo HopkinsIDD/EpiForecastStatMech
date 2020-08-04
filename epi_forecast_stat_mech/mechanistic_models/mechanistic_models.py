@@ -10,6 +10,7 @@ from epi_forecast_stat_mech import utils
 
 import jax
 import jax.numpy as jnp
+import jax.scipy.special
 import numpy as np
 
 import tensorflow_probability as tfp
@@ -767,6 +768,123 @@ class ViboudChowellModelPublished(ViboudChowellModel):
             (1. - jnp.where(x < k, x ** a / k ** a, 1.)),
             0.),
         0.1)
+
+
+expit = jax.nn.sigmoid
+logit = jax.scipy.special.logit
+
+
+@dataclasses.dataclass
+class TurnerModel(MechanisticModel):
+  """Turner's Theory of Growth model.
+
+  https://www.sciencedirect.com/science/article/pii/0025556476901127
+  Notes Colab: https://colab.sandbox.google.com/drive/1zaKZqeTKfF2EoKidRq9rudkw5P7pekRV
+  """
+
+  new_infection_distribution: Callable = FastPoisson  # pylint: disable=g-bare-generic
+
+  def log_likelihood(self, parameters, epidemics):
+    """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
+    # We treat the calculations as if they are conditional on observation[0]
+    # for consistency with the other VC code. So the intensity and observations
+    # vectors are one short, and the shortfall is filled in with 0. at the end.
+    intensity = self.intensity(parameters, epidemics.cumulative_infections[:-1])
+    observations = epidemics.infections_over_time[1:]
+    log_probs = stat_prob.pseudo_poisson_log_probs(intensity, observations)
+    return jnp.concatenate([jnp.zeros(1), log_probs])
+
+  def log_prior(self, parameters):
+    return jnp.zeros_like(parameters)
+
+  def intensity(self, parameters, x):
+    """Computes intensity given `parameters` and number of cumulative_cases."""
+    r, a, p, k = self.split_and_scale_parameters(parameters)
+    return jnp.maximum(
+        r * k ** (1 - p) * x ** p * jnp.where(
+            x < k,
+            (1. - jnp.where(x < k, x, k) ** a / k ** a),
+            0.) ** (1. + (1. - p) / a),
+        0.1)
+
+  def split_and_scale_parameters(self, parameters):
+    """Splits parameters and scales them appropriately.
+
+    We use convention in which parameters of a Turner model are stored
+    in an array as: `np.array([log(r), log(a), logit(p), log(k)])`.
+
+    Args:
+      parameters: array containing parametrization of the model.
+
+    Returns:
+      (r, a, p, k) parameters.
+    """
+    log_r, log_a, logit_p, log_k = jnp.split(parameters, 4, axis=-1)
+    r = jnp.exp(log_r)
+    a = jnp.exp(log_a)
+    p = expit(logit_p)
+    k = jnp.exp(log_k)
+    return r, a, p, k
+
+  @property
+  def param_names(self):
+    return ("r", "a", "p", "K")
+
+  def encode_params(self, parameters):
+    r, a, p, k = jnp.split(parameters, 4, axis=-1)
+    log_r = jnp.log(r)
+    log_a = jnp.log(a)
+    logit_p = logit(p)
+    log_k = jnp.log(k)
+    return jnp.concatenate([log_r, log_a, logit_p, log_k], axis=-1)
+
+  @property
+  def encoded_param_names(self):
+    return ("log_r", "log_a", "logit_p", "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((.1, .1, .1, .1))
+
+  def init_parameters(self):
+    """Returns reasonable `parameters` for an initial guess."""
+    return self.encode_params(jnp.asarray([2., .9, .9, 250000.]))
+
+  def predict(
+      self,
+      parameters,
+      rng,
+      observed_epidemics,
+      length,
+      include_observed=True
+  ):
+    """Samples a trajectory continuing `observed_epidemics` by length `length`.
+
+    Args:
+      parameters: parameters of the mechanistic model.
+      rng: PRNG to use for sampling.
+      observed_epidemics: initial epidemics trajectory to continue.
+      length: how many steps to unroll epidemics for.
+      include_observed: whether to prepend the observed epidemics.
+
+    Returns:
+      trajectory of predicted infections of length `length` or
+      `len(observed_epidemics) + length` if `include_observed` is True.
+    """
+    cumulative_cases = observed_epidemics.cumulative_infections[-1]
+    def _step(rng_and_cumulative, _):
+      rng, cumulative_cases = rng_and_cumulative
+      next_rng, rng = jax.random.split(rng)
+      intensity = self.intensity(parameters, cumulative_cases)
+      new_cases = jnp.squeeze(
+          self.new_infection_distribution(intensity).sample(1, rng))
+      cumulative_cases += new_cases
+      return (next_rng, cumulative_cases), new_cases
+
+    _, unroll = jax.lax.scan(_step, (rng, cumulative_cases), None, length)
+    if include_observed:
+      return jnp.concatenate([observed_epidemics.infections_over_time, unroll])
+    return unroll
 
 
 @dataclasses.dataclass
