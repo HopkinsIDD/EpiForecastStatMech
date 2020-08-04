@@ -764,7 +764,7 @@ class ViboudChowellModelPublished(ViboudChowellModel):
     return jnp.maximum(
         r * x**p * jnp.where(
             x < k,
-            (1. - jnp.where(x < k, (x / k) ** a, 1.)),
+            (1. - jnp.where(x < k, x ** a / k ** a, 1.)),
             0.),
         0.1)
 
