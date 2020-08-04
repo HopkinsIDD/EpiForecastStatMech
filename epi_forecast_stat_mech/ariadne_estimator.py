@@ -154,9 +154,9 @@ class AriadneEstimator(estimator_base.Estimator):
         scale parameters are selected to minimize the WIS over this dataset.
     """
     total_time = len(train_inf.time)
-    split_day_int = total_time - validation_time
-    small_train_inf = train_inf.isel(time=slice(None, split_day_int - 1))
-    validation_inf = train_inf.isel(time=slice(split_day_int, None))
+    first_test_day_int = total_time - validation_time
+    small_train_inf = train_inf.isel(time=slice(None, first_test_day_int - 1))
+    validation_inf = train_inf.isel(time=slice(first_test_day_int, None))
     return small_train_inf, validation_inf
 
   def refit_estimator(self, train_data):

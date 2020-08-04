@@ -3,24 +3,24 @@
 
 import json
 import numpy as np
-import xarray as xr
 
 
-def train_test_split_time(data, split_day):
-  """Split data into training_data (before split_day) and test_data (after).
+def train_test_split_time(data, first_test_day):
+  """Split data into training_data (before first_test_day) and test_data (after).
 
   Args:
     data: an xr.Dataset containing the ground-truth infections.
-    split_day: a time.coord at which to split the data into train and test sets.
+    first_test_day: a time.coord at which to split the data into train and test
+      sets.
 
   Returns:
     train_data: an xr.Dataset containing the training data for a model.
     test_data: an xr.Dataset containing the testing data for a model.
   """
-  # everything before split_day
-  train_data = data.sel(time=slice(None, split_day - 1)).copy()
-  # everything after split_day
-  test_data = data.sel(time=slice(split_day, None)).copy()
+  # everything before first_test_day
+  train_data = data.sel(time=slice(None, first_test_day - 1)).copy()
+  # everything after first_test_day
+  test_data = data.sel(time=slice(first_test_day, None)).copy()
   # drop all variables that won't exist on real test data
   things_included = ['location', 'time']
   if hasattr(test_data, 'dynamic_covariates'):
@@ -36,8 +36,8 @@ def train_test_split_time(data, split_day):
 
   # datetime64 is not serializable as an attribute, causing to_netcdf to crash
   # if we include it in attrs. However, making it a variable works :-/.
-  train_data = train_data.assign(split_day=split_day)
-  test_data = test_data.assign(split_day=split_day)
+  train_data = train_data.assign(first_test_day=first_test_day)
+  test_data = test_data.assign(first_test_day=first_test_day)
 
   return train_data, test_data
 

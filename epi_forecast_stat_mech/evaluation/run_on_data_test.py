@@ -4,10 +4,8 @@ import functools
 
 from absl.testing import absltest
 
-from epi_forecast_stat_mech import high_level
 from epi_forecast_stat_mech import sir_sim
 from epi_forecast_stat_mech.evaluation import run_on_data
-from epi_forecast_stat_mech.evaluation import sim_metrics
 import numpy as np
 
 
@@ -35,14 +33,15 @@ class TestRunOnData(absltest.TestCase):
 
   def test_TrainTestSplitTime(self):
     """Verify we can split data at a time point."""
-    split_day = 20
+    first_test_day = 20
 
     data = create_synthetic_dataset(num_epidemics=50, num_time_steps=100)
-    train_data, test_data = run_on_data.train_test_split_time(data, split_day)
+    train_data, test_data = run_on_data.train_test_split_time(
+        data, first_test_day)
 
     self.assertCountEqual(['location', 'time'], test_data.dims)
-    self.assertLen(test_data.time, 100 - split_day)
-    self.assertLen(train_data.time, split_day)
+    self.assertLen(test_data.time, 100 - first_test_day)
+    self.assertLen(train_data.time, first_test_day)
     np.testing.assert_array_equal(data.location, train_data.location)
     np.testing.assert_array_equal(data.location, test_data.location)
 
