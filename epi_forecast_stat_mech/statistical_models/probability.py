@@ -1,8 +1,10 @@
 # Lint as: python3
 """Common code for computing probabilities."""
 
+import functools
 import jax
 import jax.numpy as jnp
+from jax.scipy import special
 
 import tensorflow_probability
 tfp = tensorflow_probability.experimental.substrates.jax
@@ -69,3 +71,86 @@ def soft_laplace_log_prob(x, scale=1):
   return (-jnp.sqrt((x / scale)**2 + 1) + 1  # 'soft' absolute value.
           - LOG_SOFT_LAPLACE_INTEGRAL
           - jnp.log(scale))
+
+# Fun fact: sech(x)/pi is a prob. density.
+# From this one could form alternatives to soft_laplace_log_prob.
+# c.p. https://en.wikipedia.org/wiki/Hyperbolic_secant_distribution
+
+
+def laplace_prior(parameters, scale_parameter=1.):
+  return jax.tree_map(
+      lambda x: tfd.Laplace(
+          loc=jnp.zeros_like(x), scale=scale_parameter * jnp.ones_like(x)).
+      log_prob(x), parameters)
+
+
+@functools.partial(jnp.vectorize, signature='(k)->()')
+def log_mixed_laplace(x, a=0., b=0.5, include_constants=False):
+  """A scale-mixture of Laplace priors.
+
+  Let S~InverseGamma(a, b); X_i |S=s ~[iid] Laplace(0, s).
+  This computes the log density of the marginal on X.
+  The choice a=0.5, b=0.5 is a reasonable proper prior, but the default,
+  here is the choice a=0., b=0.5, and to omit the normalizing constants.
+  """
+  assert x.ndim == 1
+  n = x.shape[-1]
+  result = -(a + n) * jnp.log(b + jnp.sum(jnp.abs(x)))
+  if include_constants:
+    result += (
+        a * jnp.log(b) - n * jnp.log(2.) - special.gammaln(a) +
+        special.gammaln(a + n))
+  return result
+
+
+# c.p. log(cosh(x/delta))*delta.
+
+
+def soft_abs(x, delta):
+  return jnp.sqrt(delta**2 + x**2) - delta
+
+
+@functools.partial(jnp.vectorize, signature='(k)->()')
+def log_soft_mixed_laplace(x, a=0., b=0.5, delta=0.01, include_constants=False):
+  """A softened scale-mixture of Laplace priors.
+
+  Let S~InverseGamma(a, b); X_i |S=s ~[iid] Laplace(0, s).
+  This computes the log density of the marginal on X, except that |x_i| terms
+  are replaced with soft variants so that the function is twice continuously
+  differentiable.
+  """
+  assert x.ndim == 1
+  n = x.shape[-1]
+  result = -(a + n) * jnp.log(b + jnp.sum(soft_abs(x, delta)))
+  if include_constants:
+    result += (
+        a * jnp.log(b) - n * jnp.log(2.) - special.gammaln(a) +
+        special.gammaln(a + n))
+  return result
+
+
+def apply_to_recursive_dict_by_last_key(last_key_mapper, d, default):
+  return _rec_apply_to_recursive_dict_by_last_key(last_key_mapper, d, None,
+                                                  default)
+
+
+def _rec_apply_to_recursive_dict_by_last_key(last_key_mapper, d, last_key,
+                                             default):
+  if isinstance(d, dict):
+    return {
+        key: _rec_apply_to_recursive_dict_by_last_key(last_key_mapper, value,
+                                                      key, default)
+        for (key, value) in d.items()
+    }
+  fun = last_key_mapper.get(last_key, None)
+  if fun is None:
+    return default
+  else:
+    return fun(d)
+
+
+def log_soft_mixed_laplace_on_kernels(flax_dict):
+  return apply_to_recursive_dict_by_last_key(
+      {'kernel': lambda x: log_soft_mixed_laplace(x.T)},
+      flax_dict,
+      0.)

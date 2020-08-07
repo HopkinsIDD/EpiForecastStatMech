@@ -25,6 +25,7 @@ from epi_forecast_stat_mech.mechanistic_models import observables  # pylint: dis
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import network_models  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.statistical_models import probability
 
 
 LogLikelihoods = collections.namedtuple(
@@ -246,19 +247,12 @@ class StatMechEstimator(estimator_base.Estimator):
                            (self.stat_model.__class__,))
 
 
-def laplace_prior(parameters, scale_parameter=1.):
-  return jax.tree_map(
-      lambda x: tfd.Laplace(
-          loc=jnp.zeros_like(x), scale=scale_parameter * jnp.ones_like(x)).
-      log_prob(x), parameters)
-
-
 def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
     time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
     fit_seed=42,
-    list_of_prior_fns=(None, laplace_prior),
+    list_of_prior_fns=(None, probability.laplace_prior, probability.log_soft_mixed_laplace_on_kernels),
     list_of_mech_models=(mechanistic_models.ViboudChowellModel,
                          mechanistic_models.GaussianModel,
                          mechanistic_models.ViboudChowellModelPseudoLikelihood,
@@ -269,7 +263,7 @@ def get_estimator_dict(
                          mechanistic_models.TurnerModel),
     list_of_stat_module=(network_models.LinearModule,
                          network_models.PerceptronModule),
-    list_of_prior_names=("None", "Laplace"),
+    list_of_prior_names=("None", "Laplace", "LSML"),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
                         "MultiplicativeGrowth", "BaselineSEIR", "VCPub",
                         "Turner"),
@@ -315,7 +309,7 @@ def get_estimator_dict(
       train_steps=train_steps,
       stat_model=network_models.NormalDistributionModel(
           predict_module=network_models.LinearModule,
-          log_prior_fn=laplace_prior),
+          log_prior_fn=probability.laplace_prior),
       mech_model=mechanistic_models.ViboudChowellModel(),
       fused_train_steps=fused_train_steps,
       time_mask_fn=time_mask_fn,
