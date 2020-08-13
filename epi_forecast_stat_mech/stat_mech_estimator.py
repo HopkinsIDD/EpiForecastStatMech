@@ -250,9 +250,9 @@ class StatMechEstimator(estimator_base.Estimator):
 def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
-    time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
     fit_seed=42,
-    list_of_prior_fns=(None, probability.laplace_prior, probability.log_soft_mixed_laplace_on_kernels),
+    list_of_prior_fns=(None, probability.laplace_prior,
+                       probability.log_soft_mixed_laplace_on_kernels),
     list_of_mech_models=(mechanistic_models.ViboudChowellModel,
                          mechanistic_models.GaussianModel,
                          mechanistic_models.ViboudChowellModelPseudoLikelihood,
@@ -263,6 +263,11 @@ def get_estimator_dict(
                          mechanistic_models.TurnerModel),
     list_of_stat_module=(network_models.LinearModule,
                          network_models.PerceptronModule),
+    list_of_time_mask_fn=(functools.partial(mask_time.make_mask, min_value=50),
+                          functools.partial(
+                              mask_time.make_mask,
+                              min_value=1,
+                              recent_day_limit=6 * 7)),
     list_of_prior_names=("None", "Laplace", "LSML"),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
                         "MultiplicativeGrowth", "BaselineSEIR", "VCPub",
@@ -270,28 +275,36 @@ def get_estimator_dict(
     list_of_stat_names=("Linear", "MLP"),
     list_of_observable_choices=(observables.InternalParams(),
                                 observables.ObserveSpecified(["log_K"])),
-    list_of_observable_choices_names=("ObsEnc", "ObsLogK")):
+    list_of_observable_choices_names=("ObsEnc", "ObsLogK"),
+    list_of_time_mask_fn_names=("50cases", "6wk")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
   # hack or still useful.
   # Create an iterator
-  components_iterator = itertools.product(itertools.product(
+  components_iterator = itertools.product(itertools.product(itertools.product(
       itertools.product(list_of_prior_fns, list_of_mech_models),
-      list_of_stat_module), list_of_observable_choices)
-  names_iterator = itertools.product(itertools.product(
-      itertools.product(list_of_prior_names, list_of_mech_names),
-      list_of_stat_names), list_of_observable_choices_names)
+      list_of_stat_module), list_of_observable_choices), list_of_time_mask_fn)
+  names_iterator = itertools.product(
+      itertools.product(
+          itertools.product(
+              itertools.product(list_of_prior_names, list_of_mech_names),
+              list_of_stat_names), list_of_observable_choices_names),
+      list_of_time_mask_fn_names)
 
   # Combine into one giant dictionary of predictions
   estimator_dictionary = {}
   for components, name_components in zip(components_iterator, names_iterator):
-    ((prior_fn, mech_model_cls), stat_module), observable_choice = components
+    (((prior_fn, mech_model_cls), stat_module),
+     observable_choice), time_mask_fn = components
     (((prior_name, mech_name), stat_name),
-     observable_choice_name) = name_components
-    name_list = [prior_name, mech_name, stat_name, observable_choice_name]
+     observable_choice_name), time_mask_fn_name = name_components
+    name_list = [prior_name, mech_name, stat_name]
     # To preserve old names, I'm dropping ObsLogK from the name.
-    if observable_choice_name == "ObsLogK":
-      name_list.pop()
+    if observable_choice_name != "ObsLogK":
+      name_list.append(observable_choice_name)
+    # To preserve old names, I'm dropping 50cases from the name.
+    if time_mask_fn_name != "50cases":
+      name_list.append(time_mask_fn_name)
     model_name = "_".join(name_list)
     stat_model = network_models.NormalDistributionModel(
         predict_module=stat_module,
@@ -312,7 +325,7 @@ def get_estimator_dict(
           log_prior_fn=probability.laplace_prior),
       mech_model=mechanistic_models.ViboudChowellModel(),
       fused_train_steps=fused_train_steps,
-      time_mask_fn=time_mask_fn,
+      time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
       fit_seed=fit_seed,
       observable_choice=observables.ObserveSpecified([
           "log_r", "log_a", "log_characteristic_time",
