@@ -3,6 +3,7 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 
 def pack(tree, axis=-1):
@@ -16,7 +17,7 @@ def pack(tree, axis=-1):
     array representing a packed `tree` and `unpack` function.
   """
   flat, treedef = jax.tree_flatten(tree)
-  splits = jnp.cumsum(jnp.array([f.shape[axis] for f in flat]))[:-1]
+  splits = np.cumsum(np.array([f.shape[axis] for f in flat]))[:-1]
   packed = jnp.concatenate(flat, axis)
   def unpack(array):
     split = jnp.split(array, splits, axis)
