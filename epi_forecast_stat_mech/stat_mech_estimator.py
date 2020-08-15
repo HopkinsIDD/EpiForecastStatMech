@@ -181,14 +181,14 @@ class StatMechEstimator(estimator_base.Estimator):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
 
-    _, mech_params = self.params_
+    encoded_mech_params = self.mech_params_for_jax_code
 
     sample_mech_params_fn = getattr(
         self, "sample_mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
-            jnp.broadcast_to(mech_params,
-                             (num_samples,) + mech_params.shape), 1, 0))
+            jnp.broadcast_to(encoded_mech_params,
+                             (num_samples,) + encoded_mech_params.shape), 1, 0))
 
-    return predict_lib.simulate_predictions(self.mech_model, mech_params,
+    return predict_lib.simulate_predictions(self.mech_model, encoded_mech_params,
                                             self.data, self.epidemics,
                                             test_data, num_samples, rng,
                                             sample_mech_params_fn)
@@ -204,6 +204,10 @@ class StatMechEstimator(estimator_base.Estimator):
     self._check_fitted()
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
                                                  self.params_[1])
+
+  @property
+  def mech_params_for_jax_code(self):
+    return self.encoded_mech_params.values
 
   # TODO(mcoram): Implement mech_params_hat.
 
