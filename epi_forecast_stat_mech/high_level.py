@@ -36,6 +36,6 @@ def get_meta_estimator_dict(validation_time=14):
 
 def get_estimator_dict():
   estimator_dict = get_simple_estimator_dict()
-  meta_estimator_dict = get_meta_estimator_dict(validation_time=14)
+  meta_estimator_dict = get_meta_estimator_dict(validation_time=48)
   estimator_dict.update(meta_estimator_dict)
   return estimator_dict
