@@ -3,13 +3,10 @@
 import copy
 import functools
 import logging
-import warnings
 
 from epi_forecast_stat_mech import estimator_base
 from epi_forecast_stat_mech import high_level
-from epi_forecast_stat_mech import tf_common
 import jax
-from jax.experimental import optimizers
 import jax.numpy as jnp
 import numpy as np
 import tensorflow_probability as tfp
@@ -68,6 +65,15 @@ def calc_total_infections(new_infections):
   return new_infections.sum(axis=-1)  # bad if time is not last axis
 
 
+def linear_minimize(f, center, direction, step_increments=None):
+  if step_increments is None:
+    step_increments = np.linspace(-5, 5, 11)
+  values = np.array([f(center + i * direction) for i in step_increments])
+  idx = np.argmin(values)
+  i = step_increments[idx]
+  return center + i * direction, values[idx], values
+
+
 class AriadneEstimator(estimator_base.Estimator):
   """Fit parameters for other estimators to minimize the WIS."""
 
@@ -83,8 +89,6 @@ class AriadneEstimator(estimator_base.Estimator):
                num_samples=10000,
                init_params=None,
                calculate_observable_fn=calc_total_infections,
-               opt_kwargs=dict(method='nelder-mead',
-                               options={'maxiter': 1000}),
                fit_all=True,):
     """An estimator that fits parameters for jesm_estimator to minimize the WIS.
 
@@ -118,7 +122,6 @@ class AriadneEstimator(estimator_base.Estimator):
         use as the initial guess for the optimizer.
       calculate_observable_fn: A function that accepts an array of shape
         (location, time) and returns an observable with shape (location,).
-      opt_kwargs: Additional arguments passed to sp.optimize.minimize.
       fit_all: Bool. If true, refits all the estimators in place.
     """
     self.jesm_estimator = jesm_estimator
@@ -130,7 +133,6 @@ class AriadneEstimator(estimator_base.Estimator):
     self.predict_seed = predict_seed
     self.num_samples = num_samples
     self.init_params = init_params
-    self.opt_kwargs = opt_kwargs
     self.calculate_observable_fn = calculate_observable_fn
     self.fit_all = fit_all
 
@@ -294,15 +296,17 @@ class AriadneEstimator(estimator_base.Estimator):
       # Assumes estimator has been fit already
       self.small_estimator.sample_mech_params_fn = functools.partial(
           _helper_sample_mech_params,
-          initial_mech_params=self.small_estimator.mech_params,
+          initial_mech_params=self.small_estimator.mech_params_for_jax_code,
           scale=scale,
           rand_fun=tfd.Normal)
       prediction_dist = self.small_estimator.predict(validation_inf,
                                                      self.num_samples)
       predictions = calculate_observable_fn(prediction_dist)
-      return jax.numpy.mean(
+      result = jax.numpy.mean(
           jax.vmap(sample_based_weighted_interval_score,
                    in_axes=(0, 0, None))(predictions, observations, self.alpha))
+      print(f'called average_wis with scale {scale}, got value {result}')
+      return result
 
     # Refit the estimator if needed
     if not self._check_refitted() or self.fit_all:
@@ -316,8 +320,9 @@ class AriadneEstimator(estimator_base.Estimator):
 
     # Initialize the scales, they are the same for all locations
     init_params = self.init_params
+    num_param = self.small_estimator.mech_params.shape[-1]
     if init_params is None:
-      init_params = -jnp.ones(self.small_estimator.mech_params.shape[-1])
+      init_params = -1.0 * jnp.ones(num_param)
 
     key = jax.random.PRNGKey(self.fit_seed)
     key, subkey = jax.random.split(key)
@@ -326,12 +331,25 @@ class AriadneEstimator(estimator_base.Estimator):
         validation_inf=self.validation_data.new_infections,
         rngkey=subkey)
 
-    opt = tf_common.wrap_minimize(average_wis_partial, init_params,
-                                  **self.opt_kwargs)
-    self.opt = opt
+    criterion = average_wis_partial
+
+    # First search diagonally.
+    x = init_params
+    direction = 0.5 * np.ones_like(x)
+    x, _, _ = linear_minimize(criterion, x, direction)
+
+    # Iteratively search along each dimension with progressively smaller
+    # step sizes.
+    num_iterations = 2
+    directions = 0.2 * np.eye(len(x))
+    for _ in range(num_iterations):
+      for direction in directions:
+        x, _, _ = linear_minimize(criterion, x, direction)
+      directions /= 2.0
+
     self.is_trained_ = True
     # Return deltas
-    self.scale_params = opt.x
+    self.scale_params = x
 
     try:
       self.jesm_estimator._check_fitted()
@@ -344,23 +362,22 @@ class AriadneEstimator(estimator_base.Estimator):
 
     return self
 
-  def predict(self, test_data):
+  def predict(self, test_data, num_samples, seed=0):
     """Predict using new scale parameters."""
     self._check_trained()
-    self.jesm_estimator.sample_mech_params_fn = functools.partial(
+    self.sample_mech_params_fn = functools.partial(
         _helper_sample_mech_params,
-        initial_mech_params=self.small_estimator.mech_params,
+        initial_mech_params=self.jesm_estimator.mech_params_for_jax_code,
         scale=self.scale_params,
         rand_fun=tfd.Normal)
-
+    self.jesm_estimator.sample_mech_params_fn = self.sample_mech_params_fn
     predictions = self.jesm_estimator.predict(
-        test_data,
-        num_samples=self.num_samples)
+        test_data, num_samples=num_samples, seed=seed)
     return predictions
 
 
 def get_estimator_dict(
-    validation_time=14,
+    validation_time=48,
     train_steps=10000,
     num_samples=100,
     fit_all=True):
