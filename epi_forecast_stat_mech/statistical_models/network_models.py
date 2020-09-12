@@ -90,7 +90,8 @@ class NormalDistributionModel(base.StatisticalModel):
   def log_likelihood(self, parameters, covariates, observations):
     """Returns the log likelihood of `observations`."""
     posterior = self.predict(parameters, covariates, observations)
-    res = jax.tree_multimap(lambda p, o: p.log_prob(o), posterior, observations)
+    res = tree_util.tree_multimap(
+        lambda p, o: p.log_prob(o), posterior, observations)
     return res
 
   def predict(self, parameters, covariates, observations):
@@ -114,7 +115,7 @@ class NormalDistributionModel(base.StatisticalModel):
     else:
       loc = raw_predictions
       scale = self.fixed_scale * jnp.ones_like(loc)
-    return jax.tree_multimap(
+    return tree_util.tree_multimap(
         lambda l, s: tfd.Normal(loc=l, scale=s),
         unpack_fn(loc), unpack_fn(scale))
 
