@@ -79,7 +79,7 @@ class AriadneEstimator(estimator_base.Estimator):
 
   def __init__(self,
                jesm_estimator,
-               validation_time,
+               validation_times,
                train_steps,
                alpha=np.asarray([.02, .05, .1, .2, .3, .4, .5, .6, .7, .8,
                                  .9]),
@@ -107,8 +107,10 @@ class AriadneEstimator(estimator_base.Estimator):
     Args:
       jesm_estimator: an estimator_base.Estimator that you want to generate
         scale parameters for.
-      validation_time: an int representing the length of time you want to
-        predict.
+      validation_times: an iterable of int's representing the length of time you
+        want to calibrate predictions for, e.g. (14, 28, 42). The largest int
+        is treated as the validation_time, i.e. the forecast horizon in the
+        internal forecast validation_data split.
       train_steps: an int representing the number of train_steps when we refit
         jesm_estimator.
       alpha: a jax.numpy.array representing the new PIs to use. Defaults to
@@ -125,7 +127,8 @@ class AriadneEstimator(estimator_base.Estimator):
       fit_all: Bool. If true, refits all the estimators in place.
     """
     self.jesm_estimator = jesm_estimator
-    self.validation_time = validation_time
+    self.validation_times = sorted(validation_times)
+    self.validation_time = self.validation_times[-1]
     self.train_steps = train_steps
     self.alpha = alpha
     self.fused_train_steps = fused_train_steps
@@ -135,6 +138,7 @@ class AriadneEstimator(estimator_base.Estimator):
     self.init_params = init_params
     self.calculate_observable_fn = calculate_observable_fn
     self.fit_all = fit_all
+    self.small_estimator_is_ready_ = False
 
   def split_training_data(self, train_inf, validation_time):
     """Split the data into train and validation sets.
@@ -179,23 +183,18 @@ class AriadneEstimator(estimator_base.Estimator):
     # Is this necessary?
     self.small_estimator = copy.deepcopy(self.jesm_estimator)
     self.small_estimator.fit(small_train_data)
-    self.refit_estimator_ = True
+    self.small_estimator_is_ready_ = True
     return
 
-  def _check_refitted(self):
-    """Check if we have refit our estimator on the new, smaller train data."""
-    if not hasattr(self, 'refit_estimator_') or not self.refit_estimator_:
-      return False
-    return True
-
-  def update_validation_time(self, validation_time):
+  def update_validation_times(self, validation_times):
     """Update the split day.
 
     Args:
       validation_time: int representing the new split day
     """
-    self.validation_time = validation_time
-    self.refit_estimator_ = False
+    self.validation_times = sorted(validation_times)
+    self.validation_time = self.validation_times[-1]
+    self.small_estimator_is_ready_ = False
     self.is_trained_ = False
     return
 
@@ -272,7 +271,8 @@ class AriadneEstimator(estimator_base.Estimator):
       wis = interval_score.dot(w) / len(interval_score)
       return wis
 
-    def average_wis_of_observations(scale, rngkey, validation_inf):
+    def average_wis_of_observations(scale, rngkey, validation_inf,
+                                    validation_times):
       """Calculate the average WIS over all locations and samples.
 
       For a given set of validation_infections, calculate the WIS of our
@@ -285,6 +285,9 @@ class AriadneEstimator(estimator_base.Estimator):
         rngkey: A jax.random.PRNGKey
         validation_inf: A xr.DataArray of shape (location, time) representing
           the infections in our validation window.
+        validation_times: an interable of ints to describe initial slices of
+          time over which to score the calibration. E.g. the first 14 days
+          and the initial 42 days.
 
       Returns:
         average_wis: A float representing the WIS averaged over all samples and
@@ -292,7 +295,6 @@ class AriadneEstimator(estimator_base.Estimator):
       """
       calculate_observable_fn = self.calculate_observable_fn
       scale = jnp.asarray([scale])
-      observations = jnp.asarray(calculate_observable_fn(validation_inf))
       # Assumes estimator has been fit already
       self.small_estimator.sample_mech_params_fn = functools.partial(
           _helper_sample_mech_params,
@@ -301,21 +303,24 @@ class AriadneEstimator(estimator_base.Estimator):
           rand_fun=tfd.Normal)
       prediction_dist = self.small_estimator.predict(validation_inf,
                                                      self.num_samples)
-      predictions = calculate_observable_fn(prediction_dist)
-      result = jax.numpy.mean(
-          jax.vmap(sample_based_weighted_interval_score,
-                   in_axes=(0, 0, None))(predictions, observations, self.alpha))
+      result = 0.
+      for validation_time in validation_times:
+        validation_slice = validation_inf.isel(time=slice(validation_time))
+        prediction_slice = prediction_dist.isel(time=slice(validation_time))
+        observations = jnp.asarray(calculate_observable_fn(validation_slice))
+        predictions = calculate_observable_fn(prediction_slice)
+        current_result = jax.numpy.mean(
+            jax.vmap(sample_based_weighted_interval_score,
+                     in_axes=(0, 0, None))(
+                predictions, observations, self.alpha))
+        result += current_result
       print(f'called average_wis with scale {scale}, got value {result}')
       return result
 
-    # Refit the estimator if needed
-    if not self._check_refitted() or self.fit_all:
+    # Refit the small estimator if needed
+    if (not self.small_estimator_is_ready_ or self.fit_all or
+        not self.train_data.equals(train_data)):
       print('Something changed - refitting')
-      self.refit_estimator(train_data)
-
-    # Check that training data hasn't changed
-    if not self.train_data.equals(train_data):
-      print('Training data changed - refitting')
       self.refit_estimator(train_data)
 
     # Initialize the scales, they are the same for all locations
@@ -329,6 +334,7 @@ class AriadneEstimator(estimator_base.Estimator):
     average_wis_partial = functools.partial(
         average_wis_of_observations,
         validation_inf=self.validation_data.new_infections,
+        validation_times=self.validation_times,
         rngkey=subkey)
 
     criterion = average_wis_partial
@@ -377,8 +383,8 @@ class AriadneEstimator(estimator_base.Estimator):
 
 
 def get_estimator_dict(
-    validation_time=48,
-    train_steps=10000,
+    validation_times=(14, 28, 42),
+    train_steps=100000,
     num_samples=100,
     fit_all=True):
   estimator_dict = {}
@@ -387,7 +393,7 @@ def get_estimator_dict(
     if hasattr(small_estimator, 'mech_model'):
       estimator_dict['AE_' + name] = AriadneEstimator(
           jesm_estimator=small_estimator,
-          validation_time=validation_time,
+          validation_times=validation_times,
           train_steps=train_steps,
           num_samples=num_samples,
           fit_all=fit_all)
