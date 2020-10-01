@@ -26,16 +26,16 @@ def get_simple_estimator_dict():
   return estimator_dict
 
 
-def get_meta_estimator_dict(validation_time=14):
+def get_meta_estimator_dict(validation_times=(14, 28, 42)):
   estimator_dict = {}
   modules = [ariadne_estimator]
   for module in modules:
-    estimator_dict.update(module.get_estimator_dict(validation_time))
+    estimator_dict.update(module.get_estimator_dict(validation_times))
   return estimator_dict
 
 
 def get_estimator_dict():
   estimator_dict = get_simple_estimator_dict()
-  meta_estimator_dict = get_meta_estimator_dict(validation_time=48)
+  meta_estimator_dict = get_meta_estimator_dict()
   estimator_dict.update(meta_estimator_dict)
   return estimator_dict
