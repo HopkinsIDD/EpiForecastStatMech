@@ -1,5 +1,4 @@
 absl-py
-flax
 numpy
 scipy
 pandas
@@ -9,6 +8,8 @@ pytest-cov
 seaborn
 jax
 jaxlib
+flax
+dm-tree
 glmnet_py
 sklearn
 tensorflow
