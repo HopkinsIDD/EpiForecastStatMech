@@ -53,7 +53,7 @@ class LinearModel:
     """Returns the log prior probability of `parameters`."""
     if self.laplace_prior_scale is None:
       return 0.
-    return jax.tree_map(probability.soft_laplace_log_prob, parameters)
+    return tree_util.tree_map(probability.soft_laplace_log_prob, parameters)
 
   def log_likelihood(self, parameters, covariates, mechanistic_parameters):
     """Returns the log likelihood of `mechanistic_parameters`."""

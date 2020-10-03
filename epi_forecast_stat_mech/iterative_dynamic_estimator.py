@@ -292,6 +292,10 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
                                                  self.mech_params_stack)
 
+  @property
+  def mech_params_for_jax_code(self):
+    return self.encoded_mech_params.values
+
 
 def _get_static_covariate_df(trajectories):
   """The (static) covariate matrix."""

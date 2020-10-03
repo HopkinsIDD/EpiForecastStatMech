@@ -4,6 +4,7 @@
 from absl.testing import absltest
 from absl.testing import parameterized
 from epi_forecast_stat_mech.statistical_models import network_models
+from epi_forecast_stat_mech.statistical_models import tree_util
 import jax
 from jax.config import config
 
@@ -55,15 +56,15 @@ class NetworkModelsTest(parameterized.TestCase):
     params = stat_model.init_parameters(init_rng, covariates, observations)
 
     log_likelihood = stat_model.log_likelihood(params, covariates, observations)
-    actual_shapes = jax.tree_map(lambda x: x.shape, log_likelihood)
-    expected_shapes = jax.tree_map(lambda x: x.shape, observations)
+    actual_shapes = tree_util.tree_map(lambda x: x.shape, log_likelihood)
+    expected_shapes = tree_util.tree_map(lambda x: x.shape, observations)
     self.assertEqual(actual_shapes, expected_shapes)
 
     distributions_over_observations = stat_model.predict(
         params, covariates, observations)
-    actual_shapes = jax.tree_map(
+    actual_shapes = tree_util.tree_map(
         lambda x: x.mean().shape, distributions_over_observations)
-    expected_shapes = jax.tree_map(lambda x: x.shape, observations)
+    expected_shapes = tree_util.tree_map(lambda x: x.shape, observations)
     self.assertEqual(actual_shapes, expected_shapes)
 
 

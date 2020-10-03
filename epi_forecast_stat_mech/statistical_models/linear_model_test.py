@@ -5,7 +5,6 @@ from absl.testing import parameterized
 from epi_forecast_stat_mech.statistical_models import linear_model
 
 from epi_forecast_stat_mech.statistical_models import tree_util
-import jax
 import jax.numpy as jnp
 
 from absl.testing import absltest
@@ -37,10 +36,10 @@ class LinearModelTest(parameterized.TestCase):
     prediction_dim = sum(mech_param_shapes)
     params = linear_model.LinearParameters.init(covariate_dim,
                                                 prediction_dim)
-    covariates = jax.tree_map(lambda c: jnp.zeros([num_epidemics, c]),
-                              covariate_shapes)
-    mech_params = jax.tree_map(lambda c: jnp.zeros([num_epidemics, c]),
-                               mech_param_shapes)
+    covariates = tree_util.tree_map(lambda c: jnp.zeros([num_epidemics, c]),
+                                    covariate_shapes)
+    mech_params = tree_util.tree_map(lambda c: jnp.zeros([num_epidemics, c]),
+                                     mech_param_shapes)
 
     self.assertEqual(params.alpha.shape, (covariate_dim, prediction_dim))
     self.assertEqual(params.intercept.shape, (1, prediction_dim))

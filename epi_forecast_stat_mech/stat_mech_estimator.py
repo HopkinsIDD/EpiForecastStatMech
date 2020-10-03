@@ -25,6 +25,7 @@ from epi_forecast_stat_mech.mechanistic_models import observables  # pylint: dis
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import network_models  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.statistical_models import probability
 
 
 LogLikelihoods = collections.namedtuple(
@@ -180,14 +181,14 @@ class StatMechEstimator(estimator_base.Estimator):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
 
-    _, mech_params = self.params_
+    encoded_mech_params = self.mech_params_for_jax_code
 
     sample_mech_params_fn = getattr(
         self, "sample_mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
-            jnp.broadcast_to(mech_params,
-                             (num_samples,) + mech_params.shape), 1, 0))
+            jnp.broadcast_to(encoded_mech_params,
+                             (num_samples,) + encoded_mech_params.shape), 1, 0))
 
-    return predict_lib.simulate_predictions(self.mech_model, mech_params,
+    return predict_lib.simulate_predictions(self.mech_model, encoded_mech_params,
                                             self.data, self.epidemics,
                                             test_data, num_samples, rng,
                                             sample_mech_params_fn)
@@ -203,6 +204,10 @@ class StatMechEstimator(estimator_base.Estimator):
     self._check_fitted()
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
                                                  self.params_[1])
+
+  @property
+  def mech_params_for_jax_code(self):
+    return self.encoded_mech_params.values
 
   # TODO(mcoram): Implement mech_params_hat.
 
@@ -246,19 +251,12 @@ class StatMechEstimator(estimator_base.Estimator):
                            (self.stat_model.__class__,))
 
 
-def laplace_prior(parameters, scale_parameter=1.):
-  return jax.tree_map(
-      lambda x: tfd.Laplace(
-          loc=jnp.zeros_like(x), scale=scale_parameter * jnp.ones_like(x)).
-      log_prob(x), parameters)
-
-
 def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
-    time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
     fit_seed=42,
-    list_of_prior_fns=(None, laplace_prior),
+    list_of_prior_fns=(None, probability.laplace_prior,
+                       probability.log_soft_mixed_laplace_on_kernels),
     list_of_mech_models=(mechanistic_models.ViboudChowellModel,
                          mechanistic_models.GaussianModel,
                          mechanistic_models.ViboudChowellModelPseudoLikelihood,
@@ -269,35 +267,48 @@ def get_estimator_dict(
                          mechanistic_models.TurnerModel),
     list_of_stat_module=(network_models.LinearModule,
                          network_models.PerceptronModule),
-    list_of_prior_names=("None", "Laplace"),
+    list_of_time_mask_fn=(functools.partial(mask_time.make_mask, min_value=50),
+                          functools.partial(
+                              mask_time.make_mask,
+                              min_value=1,
+                              recent_day_limit=6 * 7)),
+    list_of_prior_names=("None", "Laplace", "LSML"),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
                         "MultiplicativeGrowth", "BaselineSEIR", "VCPub",
                         "Turner"),
     list_of_stat_names=("Linear", "MLP"),
     list_of_observable_choices=(observables.InternalParams(),
                                 observables.ObserveSpecified(["log_K"])),
-    list_of_observable_choices_names=("ObsEnc", "ObsLogK")):
+    list_of_observable_choices_names=("ObsEnc", "ObsLogK"),
+    list_of_time_mask_fn_names=("50cases", "6wk")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
   # hack or still useful.
   # Create an iterator
-  components_iterator = itertools.product(itertools.product(
+  components_iterator = itertools.product(itertools.product(itertools.product(
       itertools.product(list_of_prior_fns, list_of_mech_models),
-      list_of_stat_module), list_of_observable_choices)
-  names_iterator = itertools.product(itertools.product(
-      itertools.product(list_of_prior_names, list_of_mech_names),
-      list_of_stat_names), list_of_observable_choices_names)
+      list_of_stat_module), list_of_observable_choices), list_of_time_mask_fn)
+  names_iterator = itertools.product(
+      itertools.product(
+          itertools.product(
+              itertools.product(list_of_prior_names, list_of_mech_names),
+              list_of_stat_names), list_of_observable_choices_names),
+      list_of_time_mask_fn_names)
 
   # Combine into one giant dictionary of predictions
   estimator_dictionary = {}
   for components, name_components in zip(components_iterator, names_iterator):
-    ((prior_fn, mech_model_cls), stat_module), observable_choice = components
+    (((prior_fn, mech_model_cls), stat_module),
+     observable_choice), time_mask_fn = components
     (((prior_name, mech_name), stat_name),
-     observable_choice_name) = name_components
-    name_list = [prior_name, mech_name, stat_name, observable_choice_name]
+     observable_choice_name), time_mask_fn_name = name_components
+    name_list = [prior_name, mech_name, stat_name]
     # To preserve old names, I'm dropping ObsLogK from the name.
-    if observable_choice_name == "ObsLogK":
-      name_list.pop()
+    if observable_choice_name != "ObsLogK":
+      name_list.append(observable_choice_name)
+    # To preserve old names, I'm dropping 50cases from the name.
+    if time_mask_fn_name != "50cases":
+      name_list.append(time_mask_fn_name)
     model_name = "_".join(name_list)
     stat_model = network_models.NormalDistributionModel(
         predict_module=stat_module,
@@ -315,10 +326,10 @@ def get_estimator_dict(
       train_steps=train_steps,
       stat_model=network_models.NormalDistributionModel(
           predict_module=network_models.LinearModule,
-          log_prior_fn=laplace_prior),
+          log_prior_fn=probability.laplace_prior),
       mech_model=mechanistic_models.ViboudChowellModel(),
       fused_train_steps=fused_train_steps,
-      time_mask_fn=time_mask_fn,
+      time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
       fit_seed=fit_seed,
       observable_choice=observables.ObserveSpecified([
           "log_r", "log_a", "log_characteristic_time",
