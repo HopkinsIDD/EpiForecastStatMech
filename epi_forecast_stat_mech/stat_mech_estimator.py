@@ -49,6 +49,7 @@ class StatMechEstimator(estimator_base.Estimator):
   # TODO(mcoram): Resolve whether the "30" is deprecated hack or still useful.
   time_mask_fn: Callable[..., np.array] = functools.partial(
       mask_time.make_mask, min_value=30)
+  preprocess_fn: Callable[..., np.array] = lambda x: x
   fit_seed: int = 42
   observable_choice: observables.Observables = dataclasses.field(
       default_factory=lambda: observables.ObserveSpecified(["log_K"]))
@@ -104,7 +105,8 @@ class StatMechEstimator(estimator_base.Estimator):
     train_steps = self.train_steps
     seed = self.fit_seed
     data_model.validate_data_for_fit(data)
-    # TODO(dkochkov) consider a tunable module for preprocessing.
+    data = self.preprocess_fn(data)
+    data_model.validate_data_for_fit(data)
     data["total"] = (
         ("location", "time",), np.cumsum(
             data.new_infections.transpose("location", "time").values, -1))
@@ -251,12 +253,25 @@ class StatMechEstimator(estimator_base.Estimator):
                            (self.stat_model.__class__,))
 
 
+def seven_day_time_smooth_helper_(x):
+  if "time" in x.dims:
+    return x.rolling(time=7, min_periods=4).mean()
+  else:
+    return x
+
+
+def seven_day_time_smooth(data):
+  return xarray.Dataset({
+      key: seven_day_time_smooth_helper_(x)
+      for key, x in data.data_vars.items()
+  })
+
+
 def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
     fit_seed=42,
-    list_of_prior_fns=(None, probability.laplace_prior,
-                       probability.log_soft_mixed_laplace_on_kernels),
+    list_of_prior_fns=(probability.log_soft_mixed_laplace_on_kernels,),
     list_of_mech_models=(mechanistic_models.ViboudChowellModel,
                          mechanistic_models.GaussianModel,
                          mechanistic_models.ViboudChowellModelPseudoLikelihood,
@@ -271,37 +286,47 @@ def get_estimator_dict(
                           functools.partial(
                               mask_time.make_mask,
                               min_value=1,
-                              recent_day_limit=6 * 7)),
-    list_of_prior_names=("None", "Laplace", "LSML"),
+                              recent_day_limit=6 * 7),
+                          functools.partial(
+                              mask_time.make_mask,
+                              min_value=1,
+                              recent_day_limit=4 * 7)),
+    list_of_preprocess_fn=(lambda x: x, seven_day_time_smooth),
+    list_of_prior_names=("LSML",),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
                         "MultiplicativeGrowth", "BaselineSEIR", "VCPub",
                         "Turner"),
     list_of_stat_names=("Linear", "MLP"),
-    list_of_observable_choices=(observables.InternalParams(),
-                                observables.ObserveSpecified(["log_K"])),
-    list_of_observable_choices_names=("ObsEnc", "ObsLogK"),
-    list_of_time_mask_fn_names=("50cases", "6wk")):
+    list_of_observable_choices=(observables.InternalParams(),),
+    list_of_observable_choices_names=("ObsEnc",),
+    list_of_time_mask_fn_names=("50cases", "6wk", "4wk"),
+    list_of_preprocess_fn_names=("Id", "7day")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
   # hack or still useful.
   # Create an iterator
-  components_iterator = itertools.product(itertools.product(itertools.product(
-      itertools.product(list_of_prior_fns, list_of_mech_models),
-      list_of_stat_module), list_of_observable_choices), list_of_time_mask_fn)
+  components_iterator = itertools.product(
+      itertools.product(
+          itertools.product(
+              itertools.product(
+                  itertools.product(list_of_prior_fns, list_of_mech_models),
+                  list_of_stat_module), list_of_observable_choices),
+          list_of_time_mask_fn), list_of_preprocess_fn)
   names_iterator = itertools.product(
       itertools.product(
           itertools.product(
-              itertools.product(list_of_prior_names, list_of_mech_names),
-              list_of_stat_names), list_of_observable_choices_names),
-      list_of_time_mask_fn_names)
+              itertools.product(
+                  itertools.product(list_of_prior_names, list_of_mech_names),
+                  list_of_stat_names), list_of_observable_choices_names),
+          list_of_time_mask_fn_names), list_of_preprocess_fn_names)
 
   # Combine into one giant dictionary of predictions
   estimator_dictionary = {}
   for components, name_components in zip(components_iterator, names_iterator):
-    (((prior_fn, mech_model_cls), stat_module),
-     observable_choice), time_mask_fn = components
-    (((prior_name, mech_name), stat_name),
-     observable_choice_name), time_mask_fn_name = name_components
+    ((((prior_fn, mech_model_cls), stat_module), observable_choice),
+     time_mask_fn), preprocess_fn = components
+    ((((prior_name, mech_name), stat_name), observable_choice_name),
+     time_mask_fn_name), preprocess_fn_name = name_components
     name_list = [prior_name, mech_name, stat_name]
     # To preserve old names, I'm dropping ObsLogK from the name.
     if observable_choice_name != "ObsLogK":
@@ -309,6 +334,9 @@ def get_estimator_dict(
     # To preserve old names, I'm dropping 50cases from the name.
     if time_mask_fn_name != "50cases":
       name_list.append(time_mask_fn_name)
+    # To preserve old names, I'm dropping Id from the name.
+    if preprocess_fn_name != "Id":
+      name_list.append(preprocess_fn_name)
     model_name = "_".join(name_list)
     stat_model = network_models.NormalDistributionModel(
         predict_module=stat_module,
@@ -320,6 +348,7 @@ def get_estimator_dict(
         mech_model=mech_model,
         fused_train_steps=fused_train_steps,
         time_mask_fn=time_mask_fn,
+        preprocess_fn=preprocess_fn,
         fit_seed=fit_seed,
         observable_choice=observable_choice)
   estimator_dictionary["Laplace_VC_Linear_ObsChar1"] = StatMechEstimator(

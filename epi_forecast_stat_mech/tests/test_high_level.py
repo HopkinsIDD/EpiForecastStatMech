@@ -141,8 +141,8 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
     self.assertLen(predictions.sample, num_samples)
 
   @parameterized.parameters(
-      dict(estimator_name='Laplace_Gaussian_PL_Linear'),
-      dict(estimator_name='None_VC_Linear_ObsEnc'),
+      dict(estimator_name='LSML_Gaussian_PL_Linear_ObsEnc'),
+      dict(estimator_name='LSML_VC_Linear_ObsEnc'),
       dict(estimator_name='LSML_Turner_Linear_ObsEnc_6wk'),
   )
   def test_EstimatorDictEstimatorWithCoef(self, estimator_name):
