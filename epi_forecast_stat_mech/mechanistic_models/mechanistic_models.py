@@ -312,6 +312,12 @@ class IntensityModel(MechanisticModel):
 class StepBasedViboudChowellModel(IntensityModel):
   """ViboudChowell mechanistic model."""
 
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
   @property
   def step_based_param_names(self):
     return ("r", "a", "p", "K")
@@ -376,6 +382,12 @@ class StepBasedViboudChowellModel(IntensityModel):
 class StepBasedGaussianModel(IntensityModel):
   """Gaussian mechanistic model."""
 
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
   def _intensity(self, parameters, state):
     """Computes intensity at time `t` given `parameters`."""
     m, s, k = self._split_and_scale_parameters(parameters)
@@ -429,6 +441,12 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
   """MultiplicativeGrowth mechanistic model."""
 
   new_infection_distribution: Callable = OverDispersedPoisson
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   @property
   def step_based_param_names(self):
@@ -526,6 +544,12 @@ class ViboudChowellModel(MechanisticModel):
   # that has a `.predict` and `log_prob` method. Typically, this is a TensorFlow
   # Probability distribution.
   new_infection_distribution: Callable = FastPoisson  # pylint: disable=g-bare-generic
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def log_prior(self, parameters):
     r, a, p, k = self.split_and_scale_parameters(parameters)
@@ -646,6 +670,12 @@ class GaussianModel(MechanisticModel):
   # that has a `.predict` and `log_prob` method. Typically, this is a TensorFlow
   # Probability distribution.
   new_infection_distribution: Callable = FastPoisson  # pylint: disable=g-bare-generic
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def log_prior(self, parameters):
     """Returns log_probability prior of the `parameters` of the model."""
@@ -784,6 +814,12 @@ class TurnerModel(MechanisticModel):
 
   new_infection_distribution: Callable = FastPoisson  # pylint: disable=g-bare-generic
 
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
   def log_likelihood(self, parameters, epidemics):
     """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
     # We treat the calculations as if they are conditional on observation[0]
@@ -890,6 +926,12 @@ class TurnerModel(MechanisticModel):
 @dataclasses.dataclass
 class GaussianModelPseudoLikelihood(GaussianModel):
   """Mechanistic model of Gaussian shape with a pseudo-likelihood criterion."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
@@ -1040,6 +1082,12 @@ class DynamicMultiplicativeGrowthModel(DynamicIntensityModel,
                                        StepBasedMultiplicativeGrowthModel):
   """MultiplicativeGrowth mechanistic model with dynamic variable utilization."""
 
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
   def __init__(self, rng, dynamic_covariate):
     self.bottom_scale_dict = collections.defaultdict(lambda: 0.1)
     super().__init__(rng, dynamic_covariate)
@@ -1078,6 +1126,12 @@ class StepBasedBaselineSEIRModel(IntensityModel):
   """Baseline SEIR mechanistic model."""
 
   new_infection_distribution: Callable = FastPoisson
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   @property
   def step_based_param_names(self):
@@ -1159,6 +1213,12 @@ class StepBasedBaselineSEIRModel(IntensityModel):
 class DynamicBaselineSEIRModel(DynamicIntensityModel,
                                StepBasedBaselineSEIRModel):
   """BaselineSEIR mechanistic model with dynamic variable utilization."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def __init__(self, rng, dynamic_covariate):
     self.bottom_scale_dict = collections.defaultdict(lambda: 0.1)
