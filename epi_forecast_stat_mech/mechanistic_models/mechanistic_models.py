@@ -422,7 +422,7 @@ class StepBasedGaussianModel(IntensityModel):
     return m, jnp.exp(log_s), jnp.exp(log_k)
 
   def encode_params(self, parameters):
-    return jnp.concatenate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
+    return jnp.concatenate((parameters[jnp.array([0])], jnp.log(parameters[1:])), axis=-1)
 
   def init_parameters(self):
     """Returns reasonable `parameters` for an initial guess."""
@@ -708,7 +708,7 @@ class GaussianModel(MechanisticModel):
     return ("m", "s", "K")
 
   def encode_params(self, parameters):
-    return jnp.concatenate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
+    return jnp.concatenate((parameters[jnp.array([0])], jnp.log(parameters[1:])), axis=-1)
 
   @property
   def encoded_param_names(self):
