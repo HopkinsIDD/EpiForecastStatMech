@@ -771,6 +771,12 @@ class GaussianModel(MechanisticModel):
 class ViboudChowellModelPseudoLikelihood(ViboudChowellModel):
   """ViboudChowell mechanistic model with a pseudo-likelihood criterion."""
 
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
   def log_likelihood(self, parameters, epidemics):
     """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
     # We treat the calculations as if they are conditional on observation[0]
@@ -788,6 +794,12 @@ class ViboudChowellModelPublished(ViboudChowellModel):
 
   C.f. equation 2 of https://doi.org/10.1016/j.idm.2017.08.001
   """
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def intensity(self, parameters, x):
     """Computes intensity given `parameters` and number of cumulative_cases."""
