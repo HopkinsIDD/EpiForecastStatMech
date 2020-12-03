@@ -68,8 +68,7 @@ def simulate_dynamic_predictions(mech_model,
       sampled_mech_params,
       key,
       epidemics,
-      dynamic_covariates,
-      num_samples)
+      dynamic_covariates)
 
   full_predictions = wrap_predictions(predictions, data.location, num_samples,
                                       dynamic_covariates.time)
