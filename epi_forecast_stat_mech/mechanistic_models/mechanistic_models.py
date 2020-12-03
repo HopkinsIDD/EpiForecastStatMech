@@ -309,6 +309,7 @@ class IntensityModel(MechanisticModel):
     """Optionally return quantities that we may wish to constrain."""
     return {}
 
+
 class StepBasedViboudChowellModel(IntensityModel):
   """ViboudChowell mechanistic model."""
 

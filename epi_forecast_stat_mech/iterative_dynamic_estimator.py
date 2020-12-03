@@ -255,13 +255,14 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
   def predict(self, test_data, num_samples, seed=0):
     dynamic_covariates = xr.concat([self.data.dynamic_covariates,
                                     test_data.dynamic_covariates], dim='time')
-    centered_dynamic_covariates = self.center_dynamic_covariates(dynamic_covariates)
+    centered_dynamic_covariates = self.center_dynamic_covariates(
+        dynamic_covariates)
     # This API is subject to change in pending CLs.
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
     mech_params = self.mech_params_stack
     sample_mech_params_fn = getattr(
-        self, "sample_mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
+        self, 'sample_mech_params_fn', lambda rngkey, num_samples: jnp.swapaxes(
             jnp.broadcast_to(mech_params,
                              (num_samples,) + mech_params.shape), 1, 0))
     return predict_lib.simulate_dynamic_predictions(
@@ -437,6 +438,13 @@ def get_estimator_dict():
           mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
           stat_estimators=None,
           iter_max=20))
+  estimator_dict['iterative_randomforest__DynamicMultiplicative_reg_10'] = (
+      IterativeDynamicEstimator(
+          mech_model_class=mechanistic_models.DynamicMultiplicativeGrowthModel,
+          stat_estimators=None,
+          iter_max=20,
+          alpha_loss_weight=1E1,
+          stat_loss_weight=1E1))
   estimator_dict[
       'iterative_mean__DynamicBaselineSEIRModel'] = IterativeDynamicEstimator(
           mech_model_class=mechanistic_models.DynamicBaselineSEIRModel,
