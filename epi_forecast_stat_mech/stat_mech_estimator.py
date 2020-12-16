@@ -88,7 +88,6 @@ class StatMechEstimator(estimator_base.Estimator):
                                        [None, 0, 0])
     epidemic_observables = epidemic_observables_fn(mech_model, mech_params,
                                                    epidemics)
-    self.epidemic_observables = epidemic_observables
 
     statistical_log_likelihood = stat_model.log_likelihood(
         stat_params, covariates, epidemic_observables)
@@ -211,7 +210,22 @@ class StatMechEstimator(estimator_base.Estimator):
   def mech_params_for_jax_code(self):
     return self.encoded_mech_params.values
 
-  # TODO(mcoram): Implement mech_params_hat.
+  @property
+  def epidemic_observables(self):
+    self._check_fitted()
+    _, mech_params = self.params_
+    epidemic_observables_fn = jax.vmap(self.observable_choice.observables,
+                                       [None, 0, 0])
+    my_observables = epidemic_observables_fn(self.mech_model, mech_params,
+                                             self.epidemics)
+    return my_observables
+
+  @property
+  def observables_loc_scale_hat(self):
+    self._check_fitted()
+    stat_params, _ = self.params_
+    return self.stat_model.get_loc_scale(stat_params, self.covariates,
+                                         self.epidemic_observables)
 
   @property
   def alpha(self):

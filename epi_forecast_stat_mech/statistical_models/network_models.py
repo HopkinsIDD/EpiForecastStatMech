@@ -94,8 +94,8 @@ class NormalDistributionModel(base.StatisticalModel):
         lambda p, o: p.log_prob(o), posterior, observations)
     return res
 
-  def predict(self, parameters, covariates, observations):
-    """Predicts a distribution over `observations` based on `covariates`.
+  def get_loc_scale(self, parameters, covariates, observations):
+    """Computes loc and scale for `observations` based on `covariates`.
 
     Args:
       parameters: parameters of the statistical model.
@@ -115,9 +115,24 @@ class NormalDistributionModel(base.StatisticalModel):
     else:
       loc = raw_predictions
       scale = self.fixed_scale * jnp.ones_like(loc)
+    return unpack_fn(loc), unpack_fn(scale)
+
+  def predict(self, parameters, covariates, observations):
+    """Predicts a distribution over `observations` based on `covariates`.
+
+    Args:
+      parameters: parameters of the statistical model.
+      covariates: array representing covariates for each location.
+      observations: structure of observations to be predicted.
+
+    Returns:
+      pytree of probability distributions over `observations` given the
+      `parameters` of the statistical model and `covariates`.
+    """
+    loc, scale = self.get_loc_scale(parameters, covariates, observations)
     return tree_util.tree_multimap(
         lambda l, s: tfd.Normal(loc=l, scale=s),
-        unpack_fn(loc), unpack_fn(scale))
+        loc, scale)
 
   def linear_coefficients(self, parameters):
     dense_name = [x for x in parameters.keys() if "Dense" in x][0]
