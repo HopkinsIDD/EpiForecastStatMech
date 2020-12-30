@@ -136,17 +136,20 @@ class MechanisticModel:
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` of lenth `length.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
       rng: random number generator of type `jax.random.PRNG`.
       observed_epidemics: array representing number of infections as a function
         of time at the observed time course of the epidemics.
-      length: number of time intervals for which to forecast the epidemics.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to include the `observed_epidemics` in the
         output.
 
@@ -251,22 +254,27 @@ class IntensityModel(MechanisticModel):
       parameters,
       rng,
       observed_epidemic_record,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemic` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
 
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
     Args:
       parameters: parameters of the mechanistic model.
       rng: PRNG to use for sampling.
       observed_epidemic_record: initial epidemics trajectory to continue.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemic_record) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemic_record.t)
+    assert length >= 0
+
     def _transition(state_and_rng, new_cases_and_params):
       state, rng = state_and_rng
       new_cases, params = new_cases_and_params
@@ -615,22 +623,27 @@ class ViboudChowellModel(MechanisticModel):
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
       rng: PRNG to use for sampling.
       observed_epidemics: initial epidemics trajectory to continue.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemics) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemics.t)
+    assert length >= 0
     cumulative_cases = observed_epidemics.cumulative_infections[-1]
     def _step(rng_and_cumulative, _):
       rng, cumulative_cases = rng_and_cumulative
@@ -735,10 +748,13 @@ class GaussianModel(MechanisticModel):
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` by lenth `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
@@ -746,13 +762,15 @@ class GaussianModel(MechanisticModel):
       observed_epidemics: a namedtuple containing information about the initial
         trajectory of the epidemics. Must contain fields `t` filed for time and
         `infections_over_time` for number infections on corresponding day.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemics) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemics.t)
+    assert length >= 0
     start_time = observed_epidemics.t[-1] + 1.  # first time to predict.
     def _step(rng_and_time, _):
       rng, t = rng_and_time
@@ -904,22 +922,27 @@ class TurnerModel(MechanisticModel):
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
       rng: PRNG to use for sampling.
       observed_epidemics: initial epidemics trajectory to continue.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemics) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemics.t)
+    assert length >= 0
     cumulative_cases = observed_epidemics.cumulative_infections[-1]
     def _step(rng_and_cumulative, _):
       rng, cumulative_cases = rng_and_cumulative
@@ -1061,6 +1084,7 @@ class DynamicIntensityModel(IntensityModel):
         parameters, epidemic_record.dynamic_covariates)
     return super().log_likelihood(time_dep_params, epidemic_record)
 
+
   def predict(
       self,
       flat_parameters,
@@ -1069,7 +1093,10 @@ class DynamicIntensityModel(IntensityModel):
       dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemic` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       flat_parameters: parameters of the mechanistic model.
@@ -1085,10 +1112,8 @@ class DynamicIntensityModel(IntensityModel):
     parameters = self.unravel(flat_parameters)
     time_dep_params = self.DynamicModule.call(
         parameters, dynamic_covariates)
-    length = dynamic_covariates.shape[0] - len(observed_epidemic_record.t)
-    assert length >= 0
     return super().predict(time_dep_params, rng, observed_epidemic_record,
-                           length, include_observed)
+                           dynamic_covariates, include_observed)
 
 
 class DynamicMultiplicativeGrowthModel(DynamicIntensityModel,

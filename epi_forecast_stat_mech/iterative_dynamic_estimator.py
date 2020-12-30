@@ -253,8 +253,8 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
       plt.show()
 
   def predict(self, test_data, num_samples, seed=0):
-    dynamic_covariates = xr.concat([self.data.dynamic_covariates,
-                                    test_data.dynamic_covariates], dim='time')
+    dynamic_covariates = predict_lib.prepare_dynamic_covariates(
+        self.data, test_data, require_dynamic=True)
     centered_dynamic_covariates = self.center_dynamic_covariates(
         dynamic_covariates)
     # This API is subject to change in pending CLs.

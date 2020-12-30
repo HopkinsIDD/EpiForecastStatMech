@@ -22,33 +22,42 @@ def wrap_predictions(predictions, locations, num_samples, times):
       dims=['location', 'sample', 'time']).rename('new_infections')
 
 
-def simulate_predictions(mech_model,
-                         mech_params,
-                         data,
-                         epidemics,
-                         test_data,
-                         num_samples,
-                         rng,
-                         sample_mech_params_fn,
-                         include_observed=False):
+def construct_dummy_dynamic_covariates(location, total_duration):
+  """Construct an empty dynamic_covariates DataArray."""
+  dummy_values = np.array([], dtype='str')
+  dynamic_covariate_dummy = xarray.DataArray(
+      dummy_values,
+      dims=('dynamic_covariate',),
+      coords={'dynamic_covariate': dummy_values})
+  time_values = np.arange(total_duration)
+  time = xarray.DataArray(
+      time_values,
+      dims=('time',),
+      coords={'time': time_values})
+  dynamic_covariates = xarray.DataArray(
+      np.zeros((len(location), total_duration, 0)),
+      dims=('location', 'time', 'dynamic_covariate'),
+      coords={
+          'location': location,
+          'time': time,
+          'dynamic_covariate': dynamic_covariate_dummy
+      })
+  return dynamic_covariates
 
-  time_steps = len(test_data.time)
-  key, subkey = jax.random.split(rng)
 
-  sampled_mech_params = sample_mech_params_fn(subkey, num_samples)
-  key, subkey = jax.random.split(key)
-  predictions = monte_carlo.trajectories_from_model(
-      mech_model,
-      sampled_mech_params,
-      subkey,
-      epidemics,
-      time_steps,
-      include_observed)
-  if include_observed:
-    times = np.concatenate((data.time, test_data.time))
+def prepare_dynamic_covariates(data, test_data, require_dynamic=False):
+  """Bind the dynamic_covariates; or invent using times."""
+  if ('dynamic_covariates' in data.data_vars and
+      'dynamic_covariates' in test_data.data_vars):
+    dynamic_covariates = xarray.concat(
+        [data.dynamic_covariates, test_data.dynamic_covariates], dim='time')
   else:
-    times = test_data.time
-  return wrap_predictions(predictions, data.location, num_samples, times)
+    if require_dynamic:
+      raise ValueError('Missing dynamic_covariates in data or test_data.')
+    dynamic_covariates = construct_dummy_dynamic_covariates(
+        data.location,
+        len(data.time) + len(test_data.time))
+  return dynamic_covariates
 
 
 def simulate_dynamic_predictions(mech_model,
