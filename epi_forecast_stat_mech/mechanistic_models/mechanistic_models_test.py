@@ -79,8 +79,9 @@ class MechanisticModelsTest(parameterized.TestCase):
         np.arange(observed_duration).astype(np.float32),
         np.cumsum(np.arange(observed_duration).astype(np.float32)),
         np.zeros((observed_duration, 1)))
+    dynamic_covariates = np.zeros((observed_duration + trajectory_length, 0))
     predicted_epidemics_trajectory = mech_model.predict(
-        mech_model_params, rng, observed_epidemics, trajectory_length)
+        mech_model_params, rng, observed_epidemics, dynamic_covariates)
     actual_shape = predicted_epidemics_trajectory.shape
     expected_shape = (observed_duration + trajectory_length,)
     self.assertEqual(actual_shape, expected_shape)
@@ -116,8 +117,9 @@ class MechanisticModelsTest(parameterized.TestCase):
         np.arange(observed_duration).astype(np.float32),
         np.cumsum(np.arange(observed_duration).astype(np.float32)),
         np.zeros((observed_duration, 0)))
+    dynamic_covariates = np.zeros((observed_duration + trajectory_length, 0))
     predicted_epidemics_trajectory = mech_model.predict(
-        mech_model_params, rng, observed_epidemics, trajectory_length)
+        mech_model_params, rng, observed_epidemics, dynamic_covariates)
     actual_shape = predicted_epidemics_trajectory.shape
     expected_shape = (observed_duration + trajectory_length,)
     self.assertEqual(actual_shape, expected_shape)

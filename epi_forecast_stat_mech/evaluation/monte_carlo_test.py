@@ -13,6 +13,7 @@ import jax
 from jax.config import config
 import jax.numpy as jnp
 import numpy as np
+import xarray
 
 import tensorflow_probability
 
@@ -35,6 +36,10 @@ class DummyEpidemicsRecord(mechanistic_models.EpidemicsRecord):
         infections_over_time=infections,
         cumulative_infections=cumulative,
         dynamic_covariates=dynamic_covariates)
+
+
+def _coordify(values, dim_name):
+  return xarray.DataArray(values, dims=(dim_name,), coords={dim_name: values})
 
 
 class MonteCarloTest(parameterized.TestCase):
@@ -71,26 +76,36 @@ class MonteCarloTest(parameterized.TestCase):
       dict(
           batch_size=5,
           time_steps=7,
-          final_size=7,
+          final_size=7 * 2,
           nsamples=4,
-          seed=0,
-          include_observed=False),
+          seed=0),
       dict(
           batch_size=4,
           time_steps=17,
           final_size=17 * 2,
           nsamples=3,
-          seed=1,
-          include_observed=True))
-  def testTrajectoriesFromModelShape(self, batch_size, time_steps, final_size,
-                                     nsamples, seed, include_observed):
+          seed=1))
+  def testTrajectoriesFromDynamicModelShape(self, batch_size, time_steps,
+                                            final_size, nsamples, seed):
     model = mechanistic_models.ViboudChowellModel()
     rng0, rng1, rng2 = jax.random.split(jax.random.PRNGKey(seed), 3)
     params = tfd.Poisson(30).sample([batch_size, nsamples, 4], seed=rng0)
     epidemics = DummyEpidemicsRecord.build(rng1, batch_size, time_steps)
-    trajectories = monte_carlo.trajectories_from_model(model, params, rng2,
-                                                       epidemics, time_steps,
-                                                       include_observed)
+    np_dynamic_covariates = jnp.zeros((batch_size, 2 * time_steps, 0))
+    time = _coordify(np.arange(2 * time_steps), 'time')
+    location = _coordify(np.arange(batch_size), 'location')
+    dynamic_covariate = _coordify(
+        np.array([], dtype='str'), 'dynamic_covariate')
+    dynamic_covariates = xarray.DataArray(
+        np_dynamic_covariates,
+        dims=('location', 'time', 'dynamic_covariate'),
+        coords={
+            'location': location,
+            'time': time,
+            'dynamic_covariate': dynamic_covariate
+        })
+    trajectories = monte_carlo.trajectories_from_dynamic_model(
+        model, params, rng2, epidemics, dynamic_covariates)
     expected_shape = (batch_size, nsamples, final_size)
     self.assertEqual(expected_shape, trajectories.shape)
 
