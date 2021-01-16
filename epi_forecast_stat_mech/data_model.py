@@ -145,7 +145,7 @@ def _first_true(arr, axis):
   return np.apply_along_axis(lambda x: np.where(x)[0][0], axis=axis, arr=arr)
 
 
-def shift_timeseries_by(data, shifts_all):
+def shift_timeseries_by(data, shifts_all, enforce_positive_shifts: bool = True):
   """Return a copy of data with shifted infection start times.
 
   Returns a copy of data with where time and location  dependent DataArrays are
@@ -154,14 +154,18 @@ def shift_timeseries_by(data, shifts_all):
   Args:
     data: a xr.Dataset of the simulated infections over time.
     shifts_all: The integer amount to shift time by in each location.
+    enforce_positive_shifts: When true, treat negative shifts as shifts by 0.
 
   Returns:
     trajectories: a copy of data with the start times of new_infections shifted.
   """
   trajectories = data.copy()
 
-  # We don't want to shift any infection curves so they start before time 0
-  shifts = np.where(shifts_all > 0, shifts_all, 0)
+  if enforce_positive_shifts:
+    # We don't want to shift any infection curves so they start before time 0
+    shifts = np.where(shifts_all > 0, shifts_all, 0)
+  else:
+    shifts = shifts_all
 
   for d_var in trajectories.data_vars:
     if 'time' in trajectories[d_var].dims:
