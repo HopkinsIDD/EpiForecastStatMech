@@ -4,11 +4,9 @@ import collections
 import dataclasses
 import functools
 import itertools
-import logging
 from typing import Callable
 
 import jax
-from jax.experimental import optimizers
 import jax.numpy as jnp
 import numpy as np
 import xarray
@@ -20,6 +18,7 @@ tfd = tfp.distributions
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import mask_time  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech import optim_lib
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import observables  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
@@ -34,6 +33,9 @@ LogLikelihoods = collections.namedtuple(
      "mech_log_prior",
      "mech_log_likelihood",
      "stat_log_likelihood"])
+
+
+LEARNING_RATE_DEFAULT = 5E-3
 
 
 @dataclasses.dataclass
@@ -51,6 +53,7 @@ class StatMechEstimator(estimator_base.Estimator):
       mask_time.make_mask, min_value=30)
   preprocess_fn: Callable[..., np.array] = lambda x: x
   fit_seed: int = 42
+  learning_rate: float = LEARNING_RATE_DEFAULT
   observable_choice: observables.Observables = dataclasses.field(
       default_factory=lambda: observables.ObserveSpecified(["log_K"]))
 
@@ -130,10 +133,6 @@ class StatMechEstimator(estimator_base.Estimator):
     stat_params = self.stat_model.init_parameters(rng, covariates,
                                                   epidemic_observables)
     init_params = (stat_params, mech_params)
-
-    opt_init, opt_update, get_params = optimizers.adam(5e-4, b1=0.9, b2=0.999)
-    opt_state = opt_init(init_params)
-
     @jax.value_and_grad
     def negative_log_prob(params):
       log_likelihoods = self._log_likelihoods(
@@ -144,33 +143,12 @@ class StatMechEstimator(estimator_base.Estimator):
           mech_log_likelihood=mech_log_likelihood)
       return -1. * sum(jax.tree_leaves(jax.tree_map(jnp.sum, log_likelihoods)))
 
-    @jax.jit
-    def train_step(step, opt_state):
-      params = get_params(opt_state)
-      loss_value, grad = negative_log_prob(params)
-      opt_state = opt_update(step, grad, opt_state)
-      return opt_state, loss_value
+    adam_loop = optim_lib.get_adam_optim_loop(negative_log_prob, learning_rate=self.learning_rate)
 
-    # For some of these models (especially on accelerators), a single training
-    # step runs very quickly. Fusing steps together considerably improves
-    # performance.
-    @functools.partial(jax.jit, static_argnums=(1,))
-    def repeated_train_step(step, repeats, opt_state):
-      def f(carray, _):
-        step, opt_state, _ = carray
-        opt_state, loss_value = train_step(step, opt_state)
-        return (step + 1, opt_state, loss_value), None
-      (_, opt_state, loss_value), _ = jax.lax.scan(
-          f, (step, opt_state, 0.0), xs=None, length=repeats)
-      return opt_state, loss_value
-
-    for step in range(0, train_steps, self.fused_train_steps):
-      opt_state, loss_value = repeated_train_step(
-          step, self.fused_train_steps, opt_state)
-      if step % 1000 == 0:
-        logging.info(f"Loss at step {step} is: {loss_value}.")  # pylint: disable=logging-format-interpolation
-
-    self.params_ = get_params(opt_state)
+    self.params_ = adam_loop(
+        init_params,
+        train_steps=self.train_steps,
+        fused_train_steps=self.fused_train_steps)
     self._is_trained = True
     return self
 
@@ -286,6 +264,7 @@ def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
     fit_seed=42,
+    learning_rate=LEARNING_RATE_DEFAULT,
     list_of_prior_fns=(probability.log_soft_mixed_laplace_on_kernels,),
     list_of_mech_models=(mechanistic_models.ViboudChowellModel,
                          mechanistic_models.GaussianModel,
@@ -375,6 +354,7 @@ def get_estimator_dict(
       fused_train_steps=fused_train_steps,
       time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
       fit_seed=fit_seed,
+      learning_rate=learning_rate,
       observable_choice=observables.ObserveSpecified([
           "log_r", "log_a", "log_characteristic_time",
           "log_characteristic_height"
