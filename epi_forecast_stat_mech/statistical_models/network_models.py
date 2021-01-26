@@ -28,16 +28,19 @@ class PerceptronModule(nn.Module):
   ):
     """Computes the output of a multi-layer perceptron give `inputs`."""
     x = inputs
-    if use_batch_norm:
-      x = nn.BatchNorm(x)
     for size in hidden_layer_sizes:
+      if use_batch_norm:
+        x = nn.BatchNorm(x, bias=False, scale=False)
       x = nn.Dense(x, size)
       x = activation(x)
+    if use_batch_norm:
+      x = nn.BatchNorm(x, bias=False, scale=False)
     return nn.Dense(x, output_size)
 
 
 class LinearModule(
-    PerceptronModule.partial(hidden_layer_sizes=(), activation=None)):
+    PerceptronModule.partial(
+        hidden_layer_sizes=(), activation=None)):
   pass
 
 
@@ -142,5 +145,3 @@ class NormalDistributionModel(base.StatisticalModel):
       kernel, _ = jnp.split(kernel, 2, -1)
       bias, _ = jnp.split(bias, 2, -1)
     return kernel, bias
-
-
