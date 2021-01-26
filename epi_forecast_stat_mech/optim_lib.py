@@ -2,6 +2,7 @@
 """
 
 import functools
+import logging
 import jax
 from jax import flatten_util
 from jax.experimental import optimizers
@@ -10,10 +11,10 @@ import numpy as np
 import scipy
 
 
-def get_adam_optim_loop(f, learning_rate=1E-3):
+def get_adam_optim_loop(f, learning_rate=1E-3, b1=0.9, b2=0.999, eps=1E-6):
   """Construct an adam training loop to minimize f."""
   opt_init, opt_update, get_params = optimizers.adam(
-      learning_rate, eps=1E-6)
+      learning_rate, b1=b1, b2=b2, eps=eps)
 
   @jax.jit
   def train_step(step, opt_state):
@@ -46,6 +47,7 @@ def get_adam_optim_loop(f, learning_rate=1E-3):
       if step % 1000 == 0:
         if verbose >= 1:
           print(f'Loss at step {step} is: {loss_value}.')
+          logging.info(f'Loss at step {step} is: {loss_value}.')  # pylint: disable=logging-format-interpolation
 
     x = get_params(opt_state)
     return x
