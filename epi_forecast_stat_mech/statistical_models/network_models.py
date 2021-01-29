@@ -4,6 +4,7 @@ from typing import Any, Callable
 import dataclasses
 
 from epi_forecast_stat_mech.statistical_models import base
+from epi_forecast_stat_mech.statistical_models import probability as stat_prob
 from epi_forecast_stat_mech.statistical_models import tree_util
 
 from flax import nn
@@ -52,23 +53,23 @@ class NormalDistributionModel(base.StatisticalModel):
     predict_module: flax.nn.Module that takes `inputs` and `output_size`
       arguments and returns array of shape `[batch, output_size]` that will be
       used to predict locations of the gaussian distributed `observations` and
-      possibly scales, depending on whether `fixed_scale` is set.
-    fixed_scale: fixed scale to use for modeling distribution over parameters.
-      If `None`, then scale will be predicted by the `predict_module`.
+      possibly scales, depending on whether `error_model` is 'full'.
+    error_model: (string) Either 'full' to represent using the predict_module
+      to estimate the error-scale (heteroscedastic). Or 'plugin' to
+      represent that the scale should be based on a homoscedastic plugin.
     log_prior_fn: function that computes log_prior on a parameters of the
       `predict_module`.
-    scale_eps: minimal value for the predicted scale if scale is predicted by
-      `predict_module`.
+    scale_eps: minimal value for the predicted scale if scale.
   """
   predict_module: nn.Module = PerceptronModule
   log_prior_fn: Callable[..., Any] = None
-  fixed_scale: float = None
+  error_model: str = 'full'
   scale_eps: float = 1e-2
 
   def _output_size_and_unpack_fn(self, output_structure):
     output_array, unpack_fn = tree_util.pack(output_structure)
     output_size = output_array.shape[-1]
-    if self.fixed_scale is None:
+    if self.error_model == 'full':
       output_size *= 2
     return output_size, unpack_fn
 
@@ -91,11 +92,33 @@ class NormalDistributionModel(base.StatisticalModel):
     return self.log_prior_fn(parameters)
 
   def log_likelihood(self, parameters, covariates, observations):
-    """Returns the log likelihood of `observations`."""
-    posterior = self.predict(parameters, covariates, observations)
-    res = tree_util.tree_multimap(
-        lambda p, o: p.log_prob(o), posterior, observations)
-    return res
+    """Returns the log likelihood of `observations`.
+
+    Args:
+      parameters: parameters of the statistical model.
+      covariates: A numpy array of shape "location" x "static_covariate".
+      observations: A tree of mech_params that we want to explain.
+
+    Returns:
+      A log-likelihood. If self.error_model == 'full', the return is a tree of
+      the shape of observations (the log_likelihood of each observation). In the
+      'plugin' case, the return is a scalar (the sum).
+    """
+    if self.error_model == 'full':
+      posterior = self.predict(parameters, covariates, observations)
+      res = tree_util.tree_multimap(
+          lambda p, o: p.log_prob(o), posterior, observations)
+      return res
+    elif self.error_model == 'plugin':
+      loc, _ = self.get_loc_scale(parameters, covariates, observations)
+      tree_error = tree_util.tree_multimap(
+          lambda hat, o: o - hat, loc, observations)
+      error, _ = tree_util.pack(tree_error)
+      logprob = stat_prob.gaussian_error_logprob_with_bottom_scale(
+          error, self.scale_eps, axis=0)
+      return logprob
+    else:
+      raise ValueError(f'unexpected error_model: {self.error_model}')
 
   def get_loc_scale(self, parameters, covariates, observations):
     """Computes loc and scale for `observations` based on `covariates`.
@@ -112,13 +135,15 @@ class NormalDistributionModel(base.StatisticalModel):
     output_size, unpack_fn = self._output_size_and_unpack_fn(observations)
     raw_predictions = self.predict_module.call(
         parameters, covariates, output_size)
-    if self.fixed_scale is None:
+    if self.error_model == 'full':
       loc, raw_scale = jnp.split(raw_predictions, 2, -1)
       scale = jax.nn.softplus(raw_scale) + self.scale_eps
-    else:
+      return unpack_fn(loc), unpack_fn(scale)
+    elif self.error_model == 'plugin':
       loc = raw_predictions
-      scale = self.fixed_scale * jnp.ones_like(loc)
-    return unpack_fn(loc), unpack_fn(scale)
+      return unpack_fn(loc), None
+    else:
+      raise ValueError(f'unexpected error_model: {self.error_model}')
 
   def predict(self, parameters, covariates, observations):
     """Predicts a distribution over `observations` based on `covariates`.
@@ -138,10 +163,10 @@ class NormalDistributionModel(base.StatisticalModel):
         loc, scale)
 
   def linear_coefficients(self, parameters):
-    dense_name = [x for x in parameters.keys() if "Dense" in x][0]
-    kernel = parameters[dense_name]["kernel"]
-    bias = parameters[dense_name]["bias"]
-    if self.fixed_scale is None:
+    dense_name = [x for x in parameters.keys() if 'Dense' in x][0]
+    kernel = parameters[dense_name]['kernel']
+    bias = parameters[dense_name]['bias']
+    if self.error_model == 'full':
       kernel, _ = jnp.split(kernel, 2, -1)
       bias, _ = jnp.split(bias, 2, -1)
     return kernel, bias
