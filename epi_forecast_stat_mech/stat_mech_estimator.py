@@ -297,7 +297,8 @@ def get_estimator_dict(
     list_of_observable_choices=(observables.InternalParams(),),
     list_of_observable_choices_names=("ObsEnc",),
     list_of_time_mask_fn_names=("50cases", "6wk", "4wk"),
-    list_of_preprocess_fn_names=("Id", "7day")):
+    list_of_preprocess_fn_names=("Id", "7day"),
+    list_of_error_model_names=("full", "plugin")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
   # hack or still useful.
@@ -306,24 +307,30 @@ def get_estimator_dict(
       itertools.product(
           itertools.product(
               itertools.product(
-                  itertools.product(list_of_prior_fns, list_of_mech_models),
-                  list_of_stat_module), list_of_observable_choices),
-          list_of_time_mask_fn), list_of_preprocess_fn)
+                  itertools.product(
+                      itertools.product(list_of_prior_fns, list_of_mech_models),
+                      list_of_stat_module), list_of_observable_choices),
+              list_of_time_mask_fn), list_of_preprocess_fn),
+      list_of_error_model_names)
   names_iterator = itertools.product(
       itertools.product(
           itertools.product(
               itertools.product(
-                  itertools.product(list_of_prior_names, list_of_mech_names),
-                  list_of_stat_names), list_of_observable_choices_names),
-          list_of_time_mask_fn_names), list_of_preprocess_fn_names)
+                  itertools.product(
+                      itertools.product(list_of_prior_names,
+                                        list_of_mech_names),
+                      list_of_stat_names), list_of_observable_choices_names),
+              list_of_time_mask_fn_names), list_of_preprocess_fn_names),
+      list_of_error_model_names)
 
   # Combine into one giant dictionary of predictions
   estimator_dictionary = {}
   for components, name_components in zip(components_iterator, names_iterator):
-    ((((prior_fn, mech_model_cls), stat_module), observable_choice),
-     time_mask_fn), preprocess_fn = components
-    ((((prior_name, mech_name), stat_name), observable_choice_name),
-     time_mask_fn_name), preprocess_fn_name = name_components
+    ((((((prior_fn, mech_model_cls), stat_module), observable_choice),
+       time_mask_fn), preprocess_fn), error_model) = components
+    ((((((prior_name, mech_name), stat_name), observable_choice_name),
+       time_mask_fn_name), preprocess_fn_name),
+     error_model_name) = name_components
     name_list = [prior_name, mech_name, stat_name]
     # To preserve old names, I'm dropping ObsLogK from the name.
     if observable_choice_name != "ObsLogK":
@@ -334,11 +341,30 @@ def get_estimator_dict(
     # To preserve old names, I'm dropping Id from the name.
     if preprocess_fn_name != "Id":
       name_list.append(preprocess_fn_name)
+    if error_model_name != "full":
+      name_list.append(error_model_name)
     model_name = "_".join(name_list)
-    stat_model = network_models.NormalDistributionModel(
-        predict_module=stat_module,
-        log_prior_fn=prior_fn)
     mech_model = mech_model_cls()
+    if error_model != error_model_name:
+      raise ValueError(
+          f"Expected agreement b/w error_model and error_model_name: "
+          f"{error_model}, {error_model_name}"
+      )
+    if error_model_name == "full":
+      stat_model = network_models.NormalDistributionModel(
+          predict_module=stat_module,
+          log_prior_fn=prior_fn,
+          scale_eps=1E-2,
+          error_model="full")
+    elif error_model_name == "plugin":
+      stat_model = network_models.NormalDistributionModel(
+          predict_module=stat_module,
+          log_prior_fn=prior_fn,
+          scale_eps=mech_model.bottom_scale,
+          error_model="plugin")
+    else:
+      raise ValueError(f"Unexpected error_model_name: {error_model_name}")
+
     estimator_dictionary[model_name] = StatMechEstimator(
         train_steps=train_steps,
         stat_model=stat_model,

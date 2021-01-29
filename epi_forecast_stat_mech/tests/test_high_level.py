@@ -142,7 +142,7 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
 
   @parameterized.parameters(
       dict(estimator_name='LSML_Gaussian_PL_Linear_ObsEnc'),
-      dict(estimator_name='LSML_VC_Linear_ObsEnc'),
+      dict(estimator_name='LSML_VC_Linear_ObsEnc_plugin'),
       dict(estimator_name='LSML_Turner_Linear_ObsEnc_6wk'),
   )
   def test_EstimatorDictEstimatorWithCoef(self, estimator_name):

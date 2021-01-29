@@ -154,3 +154,55 @@ def log_soft_mixed_laplace_on_kernels(flax_dict):
       {'kernel': lambda x: log_soft_mixed_laplace(x.T)},
       flax_dict,
       0.)
+
+
+def bounded_derivative_log(x, baseline_constant):
+  r"""A C_1 log-like non-linearity; it is linear left of baseline_constant.
+
+  Selected properties:
+  If $a \le b \le c$, $\psi_c(b) - \psi_c(a) = \frac{b - a}{c}$.
+  If $a \le c \le b$, $\psi_c(b) - \psi_c(a) = 1 -
+    \frac{a}{c} + \log(b) - \log(c)$.
+  If $c \le a \le b$, $\psi_c(b) - \psi_c(a) = \log(b) - \log(a)$.
+
+  Args:
+    x: jnp-compatible float
+    baseline_constant: The maximum derivative is 1. / baseline_constant.
+
+  Returns:
+    log-like(x)
+  """
+  values = jnp.where(x <= baseline_constant,
+                     x / baseline_constant + jnp.log(baseline_constant) - 1.,
+                     jnp.log(jnp.maximum(x, baseline_constant)))
+  return values
+
+
+def gaussian_error_logprob_with_bottom_scale(error, bottom_scale, axis=0):
+  """Auto-scaled Gaussian log-prob for 0 targeted error using bounded_log.
+
+  Roughly this is for scoring the log-probability of iid N(0, sigma^2)
+  realizations where you plug in the maximum likelihood value for sigma^2.
+  The result behaves like -n/2*(c + log(MSE)). However, as a utility
+  this goes to infinity as the MSE goes to 0, which can result in pathologies.
+  To prevent this, bottom_scale reflects the "smallest" noise-scale for which
+  the computed log-likelihood should follow this pattern. Smaller errors
+  are rewarded, but not in an unbounded way.
+
+  Arguments:
+    error: jnp array. Should represent a mean 0 Gaussian-like error. E.g.
+      error = y - y_hat in some regression task. The dimension chosen by axis
+      is the dimension that indexes iid realizations.
+    bottom_scale: float (or broadcastable). Represents a small
+      standard-deviation, below which you do not particularly value
+      MSE reductions.
+    axis: dimension of error to reduce along.
+
+  Returns:
+    a (plugin) log-prob.
+  """
+  n = error.shape[axis]
+  bottom_var = bottom_scale**2
+  mse = jnp.mean(error**2, axis=axis)
+  return -(n / 2.) * (1. + jnp.log(2 * jnp.pi) +
+                      bounded_derivative_log(mse, bottom_var))
