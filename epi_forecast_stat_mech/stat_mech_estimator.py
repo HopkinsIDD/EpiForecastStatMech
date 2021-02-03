@@ -261,6 +261,15 @@ def seven_day_time_smooth(data):
   })
 
 
+def const_covariates(data):
+  del data["static_covariates"]
+  del data["static_covariate"]
+  data["static_covariates"] = xarray.DaraArray(
+      np.zeros((data.sizes["location"], 1)),
+      dims=["location", "static_covariate"])
+  return data
+
+
 def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
@@ -289,7 +298,7 @@ def get_estimator_dict(
                               mask_time.make_mask,
                               min_value=1,
                               recent_day_limit=4 * 7)),
-    list_of_preprocess_fn=(lambda x: x, seven_day_time_smooth),
+    list_of_preprocess_fn=(lambda x: x, seven_day_time_smooth, const_covariates),
     list_of_prior_names=("LSML",),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
                         "MultiplicativeGrowth", "SimpleMultiplicativeGrowth",
@@ -299,7 +308,7 @@ def get_estimator_dict(
     list_of_observable_choices=(observables.InternalParams(),),
     list_of_observable_choices_names=("ObsEnc",),
     list_of_time_mask_fn_names=("50cases", "6wk", "4wk"),
-    list_of_preprocess_fn_names=("Id", "7day"),
+    list_of_preprocess_fn_names=("Id", "7day", "ConstCov"),
     list_of_error_model_names=("full", "plugin")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
@@ -334,7 +343,11 @@ def get_estimator_dict(
        time_mask_fn_name), preprocess_fn_name),
      error_model_name) = name_components
     name_list = [prior_name, mech_name, stat_name]
+
+    # Check for unhelpful combinations here
+    # TODO(edklein): revisit if we should exclude more ConstCov models
     if stat_name == "Null" and error_model_name == "plugin": continue
+    if stat_name == "Null" and preprocess_fn_name == "ConstCov": continue
 
     # To preserve old names, I'm dropping ObsLogK from the name.
     if observable_choice_name != "ObsLogK":
