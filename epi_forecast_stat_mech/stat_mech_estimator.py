@@ -264,7 +264,7 @@ def seven_day_time_smooth(data):
 def const_covariates(data):
   del data["static_covariates"]
   del data["static_covariate"]
-  data["static_covariates"] = xarray.DaraArray(
+  data["static_covariates"] = xarray.DataArray(
       np.zeros((data.sizes["location"], 1)),
       dims=["location", "static_covariate"])
   return data
