@@ -37,6 +37,9 @@ def create_synthetic_dataset(
       num_epidemics,
       num_time_steps=train_length+prediction_length)
 
+  # This puts slightly more stress on the predict's time output.
+  trajectories['time'] = trajectories.time + 50
+
   train_data, test_data = run_on_data.train_test_split_time(
       trajectories, trajectories.time[-prediction_length])
 
