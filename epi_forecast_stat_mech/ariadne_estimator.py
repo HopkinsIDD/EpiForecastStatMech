@@ -307,7 +307,8 @@ class AriadneEstimator(estimator_base.Estimator):
       for validation_time in validation_times:
         validation_slice = validation_inf.isel(time=slice(validation_time))
         prediction_slice = prediction_dist.isel(time=slice(validation_time))
-        observations = jnp.asarray(calculate_observable_fn(validation_slice))
+        observations = jnp.asarray(
+            calculate_observable_fn(validation_slice.new_infections))
         predictions = calculate_observable_fn(prediction_slice)
         current_result = jax.numpy.mean(
             jax.vmap(sample_based_weighted_interval_score,
@@ -333,7 +334,7 @@ class AriadneEstimator(estimator_base.Estimator):
     key, subkey = jax.random.split(key)
     average_wis_partial = functools.partial(
         average_wis_of_observations,
-        validation_inf=self.validation_data.new_infections,
+        validation_inf=self.validation_data,
         validation_times=self.validation_times,
         rngkey=subkey)
 
