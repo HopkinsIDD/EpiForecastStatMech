@@ -24,6 +24,7 @@ from epi_forecast_stat_mech.mechanistic_models import observables  # pylint: dis
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import network_models  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.statistical_models import no_stat_model # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import probability
 
 
@@ -277,7 +278,8 @@ def get_estimator_dict(
         mechanistic_models.ViboudChowellModelPublished,
         mechanistic_models.TurnerModel),
     list_of_stat_module=(network_models.LinearModule,
-                         network_models.PerceptronModule),
+                         network_models.PerceptronModule,
+                         no_stat_model.Null),
     list_of_time_mask_fn=(functools.partial(mask_time.make_mask, min_value=50),
                           functools.partial(
                               mask_time.make_mask,
@@ -293,7 +295,7 @@ def get_estimator_dict(
                         "MultiplicativeGrowth", "SimpleMultiplicativeGrowth",
                         "GeneralizedMultiplicativeGrowth", "BaselineSEIR", "VCPub",
                         "Turner"),
-    list_of_stat_names=("Linear", "MLP"),
+    list_of_stat_names=("Linear", "MLP", "Null"),
     list_of_observable_choices=(observables.InternalParams(),),
     list_of_observable_choices_names=("ObsEnc",),
     list_of_time_mask_fn_names=("50cases", "6wk", "4wk"),
@@ -332,6 +334,8 @@ def get_estimator_dict(
        time_mask_fn_name), preprocess_fn_name),
      error_model_name) = name_components
     name_list = [prior_name, mech_name, stat_name]
+    if stat_name == "Null" and error_model_name == "plugin": continue
+
     # To preserve old names, I'm dropping ObsLogK from the name.
     if observable_choice_name != "ObsLogK":
       name_list.append(observable_choice_name)
@@ -350,7 +354,10 @@ def get_estimator_dict(
           f"Expected agreement b/w error_model and error_model_name: "
           f"{error_model}, {error_model_name}"
       )
-    if error_model_name == "full":
+    if stat_name == "Null":
+      # there must be a better way to do this
+      stat_model = stat_module()
+    elif error_model_name == "full":
       stat_model = network_models.NormalDistributionModel(
           predict_module=stat_module,
           log_prior_fn=prior_fn,
