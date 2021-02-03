@@ -22,20 +22,15 @@ def wrap_predictions(predictions, locations, num_samples, times):
       dims=['location', 'sample', 'time']).rename('new_infections')
 
 
-def construct_dummy_dynamic_covariates(location, total_duration):
+def construct_dummy_dynamic_covariates(location, time):
   """Construct an empty dynamic_covariates DataArray."""
   dummy_values = np.array([], dtype='str')
   dynamic_covariate_dummy = xarray.DataArray(
       dummy_values,
       dims=('dynamic_covariate',),
       coords={'dynamic_covariate': dummy_values})
-  time_values = np.arange(total_duration)
-  time = xarray.DataArray(
-      time_values,
-      dims=('time',),
-      coords={'time': time_values})
   dynamic_covariates = xarray.DataArray(
-      np.zeros((len(location), total_duration, 0)),
+      np.zeros((location.size, time.size, 0)),
       dims=('location', 'time', 'dynamic_covariate'),
       coords={
           'location': location,
@@ -54,9 +49,10 @@ def prepare_dynamic_covariates(data, test_data, require_dynamic=False):
   else:
     if require_dynamic:
       raise ValueError('Missing dynamic_covariates in data or test_data.')
+    full_time = xarray.concat([data.time, test_data.time], 'time')
     dynamic_covariates = construct_dummy_dynamic_covariates(
         data.location,
-        len(data.time) + len(test_data.time))
+        full_time)
   return dynamic_covariates
 
 
