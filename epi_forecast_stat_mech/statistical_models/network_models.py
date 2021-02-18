@@ -25,23 +25,37 @@ class PerceptronModule(nn.Module):
       output_size,
       hidden_layer_sizes=(64, 64),
       activation=jax.nn.relu,
-      use_batch_norm=True,
+      batch_norm_style='once'
   ):
     """Computes the output of a multi-layer perceptron give `inputs`."""
     x = inputs
-    for size in hidden_layer_sizes:
-      if use_batch_norm:
+    if batch_norm_style == 'none' or batch_norm_style == 'once':
+      if batch_norm_style == 'once':
+        x = nn.BatchNorm(x)
+      for size in hidden_layer_sizes:
+        x = nn.Dense(x, size)
+        x = activation(x)
+      return nn.Dense(x, output_size)
+    elif batch_norm_style == 'layerwise_whiten':
+      for size in hidden_layer_sizes:
         x = nn.BatchNorm(x, bias=False, scale=False)
-      x = nn.Dense(x, size)
-      x = activation(x)
-    if use_batch_norm:
+        x = nn.Dense(x, size)
+        x = activation(x)
       x = nn.BatchNorm(x, bias=False, scale=False)
-    return nn.Dense(x, output_size)
+      return nn.Dense(x, output_size)
+    else:
+      raise ValueError(f'Unexpected batch_norm_style: {batch_norm_style}')
+
+
+class PlainLinearModule(
+    PerceptronModule.partial(
+        hidden_layer_sizes=(), activation=None, batch_norm_style='none')):
+  pass
 
 
 class LinearModule(
     PerceptronModule.partial(
-        hidden_layer_sizes=(), activation=None)):
+        hidden_layer_sizes=(), activation=None, batch_norm_style='once')):
   pass
 
 
