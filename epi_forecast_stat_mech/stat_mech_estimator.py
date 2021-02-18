@@ -36,7 +36,7 @@ LogLikelihoods = collections.namedtuple(
      "stat_log_likelihood"])
 
 
-LEARNING_RATE_DEFAULT = 5E-3
+LEARNING_RATE_DEFAULT = 5E-4
 
 
 @dataclasses.dataclass
@@ -144,7 +144,8 @@ class StatMechEstimator(estimator_base.Estimator):
           mech_log_likelihood=mech_log_likelihood)
       return -1. * sum(jax.tree_leaves(jax.tree_map(jnp.sum, log_likelihoods)))
 
-    adam_loop = optim_lib.get_adam_optim_loop(negative_log_prob, learning_rate=self.learning_rate)
+    adam_loop = optim_lib.get_adam_optim_loop(
+        negative_log_prob, learning_rate=self.learning_rate)
 
     self.params_ = adam_loop(
         init_params,
@@ -393,6 +394,7 @@ def get_estimator_dict(
         time_mask_fn=time_mask_fn,
         preprocess_fn=preprocess_fn,
         fit_seed=fit_seed,
+        learning_rate=learning_rate,
         observable_choice=observable_choice)
   estimator_dictionary["Laplace_VC_Linear_ObsChar1"] = StatMechEstimator(
       train_steps=train_steps,
