@@ -211,7 +211,9 @@ class StatMechEstimator(estimator_base.Estimator):
   @property
   def alpha(self):
     self._check_fitted()
-    if issubclass(self.stat_model.predict_module, network_models.LinearModule):
+    if (issubclass(self.stat_model.predict_module, network_models.LinearModule)
+        or issubclass(self.stat_model.predict_module,
+                      network_models.PlainLinearModule)):
       kernel, unused_intercept = self.stat_model.linear_coefficients(
           self.params_[0])
       assert kernel.shape[1] == len(self.epidemic_observables.keys()), (
@@ -231,7 +233,9 @@ class StatMechEstimator(estimator_base.Estimator):
   @property
   def intercept(self):
     self._check_fitted()
-    if issubclass(self.stat_model.predict_module, network_models.LinearModule):
+    if (issubclass(self.stat_model.predict_module, network_models.LinearModule)
+        or issubclass(self.stat_model.predict_module,
+                      network_models.PlainLinearModule)):
       unused_kernel, bias = self.stat_model.linear_coefficients(
           self.params_[0])
       assert bias.shape == (len(self.epidemic_observables.keys()),), (
@@ -288,8 +292,8 @@ def get_estimator_dict(
         mechanistic_models.ViboudChowellModelPublished,
         mechanistic_models.TurnerModel),
     list_of_stat_module=(network_models.LinearModule,
-                         network_models.PerceptronModule,
-                         no_stat_model.Null),
+                         network_models.PlainLinearModule,
+                         network_models.PerceptronModule, no_stat_model.Null),
     list_of_time_mask_fn=(functools.partial(mask_time.make_mask, min_value=50),
                           functools.partial(
                               mask_time.make_mask,
@@ -299,13 +303,14 @@ def get_estimator_dict(
                               mask_time.make_mask,
                               min_value=1,
                               recent_day_limit=4 * 7)),
-    list_of_preprocess_fn=(lambda x: x, seven_day_time_smooth, const_covariates),
+    list_of_preprocess_fn=(lambda x: x, seven_day_time_smooth,
+                           const_covariates),
     list_of_prior_names=("LSML",),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
                         "MultiplicativeGrowth", "SimpleMultiplicativeGrowth",
-                        "GeneralizedMultiplicativeGrowth", "BaselineSEIR", "VCPub",
-                        "Turner"),
-    list_of_stat_names=("Linear", "MLP", "Null"),
+                        "GeneralizedMultiplicativeGrowth", "BaselineSEIR",
+                        "VCPub", "Turner"),
+    list_of_stat_names=("Linear", "PlainLinear", "MLP", "Null"),
     list_of_observable_choices=(observables.InternalParams(),),
     list_of_observable_choices_names=("ObsEnc",),
     list_of_time_mask_fn_names=("50cases", "6wk", "4wk"),

@@ -145,8 +145,8 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
 
   @parameterized.parameters(
       dict(estimator_name='LSML_Gaussian_PL_Linear_ObsEnc'),
-      dict(estimator_name='LSML_VC_Linear_ObsEnc_plugin'),
-      dict(estimator_name='LSML_Turner_Linear_ObsEnc_6wk'),
+      dict(estimator_name='LSML_VC_PlainLinear_ObsEnc'),
+      dict(estimator_name='LSML_Turner_Linear_ObsEnc_6wk_plugin'),
   )
   def test_EstimatorDictEstimatorWithCoef(self, estimator_name):
     """Verify we can fit and predict from the named estimator.
