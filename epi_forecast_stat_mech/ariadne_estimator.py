@@ -81,8 +81,8 @@ class AriadneEstimator(estimator_base.Estimator):
                jesm_estimator,
                validation_times,
                train_steps,
-               alpha=np.asarray([.02, .05, .1, .2, .3, .4, .5, .6, .7, .8,
-                                 .9]),
+               interval_alpha=np.asarray([.02, .05, .1, .2, .3, .4, .5,
+                                          .6, .7, .8, .9]),
                fused_train_steps=100,
                fit_seed=0,
                predict_seed=42,
@@ -113,7 +113,7 @@ class AriadneEstimator(estimator_base.Estimator):
         internal forecast validation_data split.
       train_steps: an int representing the number of train_steps when we refit
         jesm_estimator.
-      alpha: a jax.numpy.array representing the new PIs to use. Defaults to
+      interval_alpha: a jax.numpy.array representing the new PIs to use. Defaults to
         those used in FluSight.
       fused_train_steps: an int representing the number of train stesps to fuse
       fit_seed: an int used to seed the rng.
@@ -130,7 +130,8 @@ class AriadneEstimator(estimator_base.Estimator):
     self.validation_times = sorted(validation_times)
     self.validation_time = self.validation_times[-1]
     self.train_steps = train_steps
-    self.alpha = alpha
+    self._interval_alpha = interval_alpha
+    self._scale_params = None
     self.fused_train_steps = fused_train_steps
     self.fit_seed = fit_seed
     self.predict_seed = predict_seed
@@ -198,13 +199,13 @@ class AriadneEstimator(estimator_base.Estimator):
     self.is_trained_ = False
     return
 
-  def update_alpha(self, alpha):
+  def update_interval_alpha(self, interval_alpha):
     """Update the alpha.
 
     Args:
-      alpha: a jnp.array representing the new PIs to use
+      interval_alpha: a jnp.array representing the new PIs to use
     """
-    self.alpha = alpha
+    self._interval_alpha = interval_alpha
     self.is_trained_ = False
     return
 
@@ -229,9 +230,10 @@ class AriadneEstimator(estimator_base.Estimator):
       train_data: An xr.Dataset representing the training data. We split this
         into train and validation data using self.validation_time.
     Returns:
-      scale_params: A series of floats representing the scale of the Noraml
-        distributions to sample mech_params from to minimize the WIS on the
-        validation data.
+      self
+      Side effect: updates scale_params: A series of floats representing the
+        scale of the Normal distributions to sample mech_params from to minimize
+        the WIS on the validation data.
     """
 
     def sample_based_weighted_interval_score(predicted_samples,
@@ -313,7 +315,7 @@ class AriadneEstimator(estimator_base.Estimator):
         current_result = jax.numpy.mean(
             jax.vmap(sample_based_weighted_interval_score,
                      in_axes=(0, 0, None))(
-                predictions, observations, self.alpha))
+                predictions, observations, self._interval_alpha))
         result += current_result
       print(f'called average_wis with scale {scale}, got value {result}')
       return result
@@ -355,8 +357,7 @@ class AriadneEstimator(estimator_base.Estimator):
       directions /= 2.0
 
     self.is_trained_ = True
-    # Return deltas
-    self.scale_params = x
+    self._scale_params = x
 
     try:
       self.jesm_estimator._check_fitted()
@@ -375,12 +376,67 @@ class AriadneEstimator(estimator_base.Estimator):
     self.sample_mech_params_fn = functools.partial(
         _helper_sample_mech_params,
         initial_mech_params=self.jesm_estimator.mech_params_for_jax_code,
-        scale=self.scale_params,
+        scale=self._scale_params,
         rand_fun=tfd.Normal)
     self.jesm_estimator.sample_mech_params_fn = self.sample_mech_params_fn
     predictions = self.jesm_estimator.predict(
         test_data, num_samples=num_samples, seed=seed)
     return predictions
+
+  @property
+  def interval_alpha(self):
+    return self._interval_alpha
+
+  @property
+  def scale_params(self):
+    self._check_trained()
+    return xr.DataArray(
+        np.exp(self._scale_params),
+        dims=('param',),
+        coords={
+            'param': list(self.jesm_estimator.mech_model.encoded_param_names)
+        })
+
+  @property
+  def mech_params(self):
+    self._check_trained()
+    return self.jesm_estimator.mech_params
+
+  @property
+  def encoded_mech_params(self):
+    self._check_trained()
+    return self.jesm_estimator.encoded_mech_params
+
+  @property
+  def mech_params_for_jax_code(self):
+    self._check_trained()
+    return self.jesm_estimator.mech_params_for_jax_code
+
+  @property
+  def epidemic_observables(self):
+    self._check_trained()
+    return self.jesm_estimator.epidemic_observables
+
+  @property
+  def observables_loc_scale_hat(self):
+    self._check_trained()
+    return self.jesm_estimator.observables_loc_scale_hat
+
+  @property
+  def alpha(self):
+    self._check_trained()
+    return self.jesm_estimator.alpha
+
+  @property
+  def intercept(self):
+    self._check_trained()
+    return self.jesm_estimator.intercept
+
+  @property
+  def params_(self):
+    """Unoffical raw access for stat_mech models."""
+    self._check_trained()
+    return self.jesm_estimator.params_
 
 
 def get_estimator_dict(
