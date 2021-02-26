@@ -107,31 +107,32 @@ class StatMechEstimator(estimator_base.Estimator):
   def fit(self, data):
     train_steps = self.train_steps
     seed = self.fit_seed
+    rng = jax.random.PRNGKey(seed)
+    mech_rng, stat_rng = jax.random.split(rng, 2)
+
     data_model.validate_data_for_fit(data)
     data = self.preprocess_fn(data)
     data_model.validate_data_for_fit(data)
     data["total"] = (
         ("location", "time",), np.cumsum(
             data.new_infections.transpose("location", "time").values, -1))
-    num_locations = data.sizes["location"]
     self.data = data
-    self.covariates = covariates = data.static_covariates.transpose(
-        "location", "static_covariate").values
+    static_covariates = data.static_covariates.transpose(
+        "location", "static_covariate")
+    self.covariates = covariates = static_covariates.values
     self.epidemics = epidemics = (
         mechanistic_models.pack_epidemics_record_tuple(data))
     self.time_mask = self.time_mask_fn(data)
 
-    # Mechanistic model initialization
-    mech_params = jnp.stack([
-        self.mech_model.init_parameters() for _ in range(num_locations)])
+    mech_params = mechanistic_models.initialize_mech_model_stack(
+        mech_rng, self.mech_model, data, epidemics)
     epidemic_observables_fn = jax.vmap(self.observable_choice.observables,
                                        [None, 0, 0])
     epidemic_observables = epidemic_observables_fn(self.mech_model, mech_params,
                                                    epidemics)
 
     # Statistical model initialization
-    rng = jax.random.PRNGKey(seed)
-    stat_params = self.stat_model.init_parameters(rng, covariates,
+    stat_params = self.stat_model.init_parameters(stat_rng, covariates,
                                                   epidemic_observables)
     init_params = (stat_params, mech_params)
     @jax.value_and_grad

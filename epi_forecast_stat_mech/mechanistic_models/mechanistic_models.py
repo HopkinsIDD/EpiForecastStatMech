@@ -23,7 +23,7 @@ import flax.nn.initializers
 
 Array = Union[float, jnp.DeviceArray, np.ndarray]
 
-
+# TODO(mcoram): Add static_covariates here, perhaps, e.g. to access population.
 EpidemicsRecord = collections.namedtuple("EpidemicsRecord", [
     "t", "infections_over_time", "cumulative_infections", "dynamic_covariates"
 ])
@@ -100,6 +100,29 @@ def OverDispersedPoisson(mean, overdispersion):
       validate_args=False)
 
 
+def initialize_mech_model_stack(rng, mech_model, data, epidemics):
+  """Initialize a stack of mech_models."""
+  num_locations = data.sizes["location"]
+  rng_per_location = jax.random.split(rng, num_locations)
+
+  static_covariate_names = data.static_covariate.values
+  if "dynamic_covariate" in data:
+    dynamic_covariate_names = data.dynamic_covariate.values
+  else:
+    dynamic_covariate_names = []
+  mech_params = jax.vmap(mech_model.init_parameters,
+                         [0, 0, None, None])(rng_per_location, epidemics,
+                                             static_covariate_names,
+                                             dynamic_covariate_names)
+  return mech_params
+
+
+def K_initializer(_rng, epidemic, _static_covariate_names,
+                  _dynamic_covariate_names):
+  current_total_infected = jnp.nansum(epidemic.infections_over_time)
+  return current_total_infected * 1.1 + 1000.
+
+
 class MechanisticModel:
   """Abstract class representing mechanistic models."""
 
@@ -160,7 +183,7 @@ class MechanisticModel:
     ...
 
   @abc.abstractmethod
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
     ...
 
@@ -369,9 +392,9 @@ class StepBasedViboudChowellModel(IntensityModel):
         jnp.isnan(initial_record.cumulative_infections), 0.,
         initial_record.cumulative_infections)
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([2., .9, .9, 200000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, K_initializer(*pargs)]))
 
   def _split_and_scale_parameters(self, parameters):
     """Splits parameters and scales them appropriately.
@@ -433,9 +456,9 @@ class StepBasedGaussianModel(IntensityModel):
   def encode_params(self, parameters):
     return jnp.concatenate((parameters[jnp.array([0])], jnp.log(parameters[1:])), axis=-1)
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([100., 100., 1000.]))
+    return self.encode_params(jnp.asarray([100., 100., K_initializer(*pargs)]))
 
   @property
   def step_based_param_names(self):
@@ -490,9 +513,10 @@ class StepBasedGeneralizedMultiplicativeGrowthModel(IntensityModel):
     tuple_form = (gamma, beta, p, K) = jnp.exp(parameters)
     return tuple_form
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([0.5, 0.75, 1., 100000.]))
+    return self.encode_params(
+        jnp.asarray([0.5, 0.75, 1., K_initializer(*pargs)]))
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
@@ -600,9 +624,9 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
     tuple_form = (base, beta, K) = jnp.exp(parameters)
     return tuple_form
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([0.5, 0.75, 10000.]))
+    return self.encode_params(jnp.asarray([0.5, 0.75, K_initializer(*pargs)]))
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
@@ -694,9 +718,9 @@ class StepBasedSimpleMultiplicativeGrowthModel(IntensityModel):
     tuple_form = (beta, K) = jnp.exp(parameters)
     return tuple_form
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([1.01, 10000.]))
+    return self.encode_params(jnp.asarray([1.01, K_initializer(*pargs)]))
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
@@ -816,9 +840,9 @@ class ViboudChowellModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((.1, .1, .1, .1))
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([2., .9, .9, 250000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, K_initializer(*pargs)]))
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
@@ -941,9 +965,10 @@ class GaussianModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((3., .1, .1))
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([100., 100., 1000.]))
+    return self.encode_params(
+        jnp.asarray([100., 100., K_initializer(*pargs)]))
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
@@ -1122,9 +1147,9 @@ class TurnerModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((.1, .1, .1, .1))
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([2., .9, .9, 250000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, K_initializer(*pargs)]))
 
   def predict(
       self,
@@ -1280,7 +1305,8 @@ class DynamicIntensityModel(IntensityModel):
     return jnp.asarray(
         [self.bottom_scale_dict[key] for key in self.encoded_param_names])
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
+    # TODO(mcoram): Restructure Dynamic initialization to use *pargs here.
     return self.init_flat
 
   def log_prior(self, parameters):
@@ -1448,9 +1474,10 @@ class StepBasedBaselineSEIRModel(IntensityModel):
                   K) = jnp.exp(parameters)
     return tuple_form
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([0.5, 0.3, 0.3, 10000.]))
+    return self.encode_params(
+        jnp.asarray([0.5, 0.3, 0.3, K_initializer(*pargs)]))
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
