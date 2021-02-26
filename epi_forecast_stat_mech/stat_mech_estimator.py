@@ -105,7 +105,6 @@ class StatMechEstimator(estimator_base.Estimator):
         stat_log_likelihood=statistical_log_likelihood)
 
   def fit(self, data):
-    train_steps = self.train_steps
     seed = self.fit_seed
     rng = jax.random.PRNGKey(seed)
     mech_rng, stat_rng = jax.random.split(rng, 2)
@@ -135,7 +134,7 @@ class StatMechEstimator(estimator_base.Estimator):
     stat_params = self.stat_model.init_parameters(stat_rng, covariates,
                                                   epidemic_observables)
     init_params = (stat_params, mech_params)
-    @jax.value_and_grad
+
     def negative_log_prob(params):
       log_likelihoods = self._log_likelihoods(
           params, epidemics, covariates, self.mech_model, self.stat_model)
@@ -145,12 +144,11 @@ class StatMechEstimator(estimator_base.Estimator):
           mech_log_likelihood=mech_log_likelihood)
       return -1. * sum(jax.tree_leaves(jax.tree_map(jnp.sum, log_likelihoods)))
 
-    adam_loop = optim_lib.get_adam_optim_loop(
-        negative_log_prob, learning_rate=self.learning_rate)
-
-    self.params_ = adam_loop(
+    self.params_ = optim_lib.adam_optimize(
+        negative_log_prob,
         init_params,
         train_steps=self.train_steps,
+        learning_rate=self.learning_rate,
         fused_train_steps=self.fused_train_steps)
     self._is_trained = True
     return self
