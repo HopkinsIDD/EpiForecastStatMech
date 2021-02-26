@@ -45,6 +45,7 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
                stat_loss_weight=1E0,
                verbose=1,
                time_mask_fn=functools.partial(mask_time.make_mask, min_value=1),
+               rng=None
                ):
     """Construct an IterativeEstimator.
 
@@ -78,6 +79,7 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
         2: Also report initial value and gradient.
       time_mask_fn: A function that returns a np.array that can be used to mask
         part of the new_infections curve.
+      rng: A jax.random.PRNGKey.
     """
     if stat_estimators is None:
       stat_estimators = collections.defaultdict(
@@ -95,6 +97,9 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
     self.stat_loss_weight = stat_loss_weight
     self.time_mask_fn = time_mask_fn
     self.verbose = verbose
+    if rng is None:
+      rng = jax.random.PRNGKey(0)
+    self.rng = rng
 
   def center_dynamic_covariates(self, dynamic_covariates):
     return ((dynamic_covariates - self.dynamic_covariate_m) /
@@ -166,9 +171,8 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
 
     mech_plus_stat_loss_val_and_grad = jax.jit(
         jax.value_and_grad(mech_plus_stat_errors))
-
-    mech_params_stack = jnp.stack(
-        [self.mech_model.init_parameters() for _ in range(num_locations)])
+    mech_params_stack = mechanistic_models.initialize_mech_model_stack(
+        self.rng, self.mech_model, data, epidemics)
     assert mech_params_stack.shape[1] == len(self.encoded_param_names)
     mech_params_hat_stack = mech_params_stack
 
