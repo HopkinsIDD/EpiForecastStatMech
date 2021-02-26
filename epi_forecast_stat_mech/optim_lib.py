@@ -7,19 +7,23 @@ import jax
 from jax import flatten_util
 from jax.experimental import optimizers
 import jax.numpy as jnp
+import jax.tree_util
 import numpy as np
 import scipy
 
 
-def get_adam_optim_loop(f, learning_rate=1E-3, b1=0.9, b2=0.999, eps=1E-6):
-  """Construct an adam training loop to minimize f."""
+def make_repeated_adam(value_and_grad_f,
+                       learning_rate=1E-3,
+                       b1=0.9,
+                       b2=0.999,
+                       eps=1E-6):
   opt_init, opt_update, get_params = optimizers.adam(
       learning_rate, b1=b1, b2=b2, eps=eps)
 
   @jax.jit
   def train_step(step, opt_state):
     params = get_params(opt_state)
-    loss_value, grad = f(params)
+    loss_value, grad = value_and_grad_f(params)
     opt_state = opt_update(step, grad, opt_state)
     return opt_state, loss_value
 
@@ -28,30 +32,63 @@ def get_adam_optim_loop(f, learning_rate=1E-3, b1=0.9, b2=0.999, eps=1E-6):
   # performance.
   @functools.partial(jax.jit, static_argnums=(1,))
   def repeated_train_step(step, repeats, opt_state):
-    def f(carray, _):
+
+    def step_helper(carray, _):
       step, opt_state, _ = carray
       opt_state, loss_value = train_step(step, opt_state)
       return (step + 1, opt_state, loss_value), None
+
     (_, opt_state, loss_value), _ = jax.lax.scan(
-        f, (step, opt_state, 0.0), xs=None, length=repeats)
+        step_helper, (step, opt_state, 0.0), xs=None, length=repeats)
     return opt_state, loss_value
 
-  def train_loop(x0, train_steps=10000, fused_train_steps=100, verbose=1):
-    if verbose >= 2:
-      print(f'x0: {x0}')
-      print(f'f(x0): {f(x0)}')
-    opt_state = opt_init(x0)
-    for step in range(0, train_steps, fused_train_steps):
-      opt_state, loss_value = repeated_train_step(
-          step, fused_train_steps, opt_state)
-      if step % 1000 == 0:
-        if verbose >= 1:
-          print(f'Loss at step {step} is: {loss_value}.')
-          logging.info(f'Loss at step {step} is: {loss_value}.')  # pylint: disable=logging-format-interpolation
+  return opt_init, repeated_train_step, get_params
 
-    x = get_params(opt_state)
-    return x
-  return train_loop
+
+def contains_nans(tree):
+  return jax.tree_util.tree_reduce(
+      lambda accum, val: accum or jnp.isnan(val).any(),
+      tree,
+      initializer=False)
+
+
+def adam_optimize(f,
+                    x0,
+                    train_steps=10000,
+                    learning_rate=1E-3,
+                    b1=0.9,
+                    b2=0.999,
+                    eps=1E-6,
+                    fused_train_steps=100,
+                    verbose=1):
+  """Run an adam training loop to minimize f."""
+
+  value_and_grad_f = jax.jit(jax.value_and_grad(f))
+  opt_init, repeated_train_step, get_params = make_repeated_adam(
+      value_and_grad_f, learning_rate=learning_rate, b1=b1, b2=b2, eps=eps)
+  if verbose >= 2:
+    print(f'x0: {x0}')
+    print(f'f(x0): {f(x0)}')
+  opt_state = opt_init(x0)
+  old_opt_state = opt_state
+  for step in range(0, train_steps, fused_train_steps):
+    opt_state, loss_value = repeated_train_step(step, fused_train_steps,
+                                                opt_state)
+    if step % 1000 == 0:
+      if verbose >= 1:
+        print(f'Loss at step {step} is: {loss_value}.')
+        logging.info(f'Loss at step {step} is: {loss_value}.')  # pylint: disable=logging-format-interpolation
+    if contains_nans(value_and_grad_f(get_params(opt_state))):
+      learning_rate /= 2.
+      _, repeated_train_step, get_params = make_repeated_adam(
+          value_and_grad_f, learning_rate=learning_rate, b1=b1, b2=b2, eps=eps)
+      print(f'nan encountered. adjusted learning_rate: {learning_rate}')
+      opt_state = old_opt_state
+    else:
+      old_opt_state = opt_state
+
+  x = get_params(opt_state)
+  return x
 
 
 def np_float(x):
@@ -100,9 +137,9 @@ def _wrap_minimize(jnp_fun, x0_in, **kwargs):
   return x_out, opt_status, opt1
 
 
-def lbfgs_optim(f, x0, max_iter=10000):
+def lbfgs_optimize(f, x0, max_iter=10000):
   return _wrap_minimize(
-      f,
+      jax.jit(jax.value_and_grad(f)),
       x0,
       jac=True,
       method='L-BFGS-B',  # sometimes line-search failure.

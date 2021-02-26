@@ -169,8 +169,6 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
           self.alpha_loss_weight * jnp.sum(alpha_loss))
       return penalized_mech_plus_current_stat_loss
 
-    mech_plus_stat_loss_val_and_grad = jax.jit(
-        jax.value_and_grad(mech_plus_stat_errors))
     mech_params_stack = mechanistic_models.initialize_mech_model_stack(
         self.rng, self.mech_model, data, epidemics)
     assert mech_params_stack.shape[1] == len(self.encoded_param_names)
@@ -180,18 +178,17 @@ class IterativeDynamicEstimator(estimator_base.Estimator):
       # Update mech_params_stack "regularized" by current mech_params_hat_stack.
       # N.B. This is not a maximum likelihood update.
       # We run two optimizers consecutively to try to unstick each.
-      adam_loop = optim_lib.get_adam_optim_loop(
+      mech_params_stack = optim_lib.adam_optimize(
           functools.partial(
-              mech_plus_stat_loss_val_and_grad,
+              mech_plus_stat_errors,
               mech_params_hat_stack=mech_params_hat_stack),
-          learning_rate=self.learning_rate)
-      mech_params_stack = adam_loop(
           mech_params_stack,
           train_steps=self.gradient_steps,
+          learning_rate=self.learning_rate,
           verbose=self.verbose)
-      mech_params_stack, opt_status, _ = optim_lib.lbfgs_optim(
+      mech_params_stack, opt_status, _ = optim_lib.lbfgs_optimize(
           functools.partial(
-              mech_plus_stat_loss_val_and_grad,
+              mech_plus_stat_errors,
               mech_params_hat_stack=mech_params_hat_stack), mech_params_stack)
       if not opt_status[0]:
         print('optimizer reports: %s' % (opt_status,))
