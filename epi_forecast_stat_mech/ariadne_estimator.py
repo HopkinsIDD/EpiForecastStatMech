@@ -3,13 +3,10 @@
 import copy
 import functools
 import logging
-import warnings
 
 from epi_forecast_stat_mech import estimator_base
 from epi_forecast_stat_mech import high_level
-from epi_forecast_stat_mech import tf_common
 import jax
-from jax.experimental import optimizers
 import jax.numpy as jnp
 import numpy as np
 import tensorflow_probability as tfp
@@ -68,23 +65,30 @@ def calc_total_infections(new_infections):
   return new_infections.sum(axis=-1)  # bad if time is not last axis
 
 
+def linear_minimize(f, center, direction, step_increments=None):
+  if step_increments is None:
+    step_increments = np.linspace(-5, 5, 11)
+  values = np.array([f(center + i * direction) for i in step_increments])
+  idx = np.argmin(values)
+  i = step_increments[idx]
+  return center + i * direction, values[idx], values
+
+
 class AriadneEstimator(estimator_base.Estimator):
   """Fit parameters for other estimators to minimize the WIS."""
 
   def __init__(self,
                jesm_estimator,
-               validation_time,
+               validation_times,
                train_steps,
-               alpha=np.asarray([.02, .05, .1, .2, .3, .4, .5, .6, .7, .8,
-                                 .9]),
+               interval_alpha=np.asarray([.02, .05, .1, .2, .3, .4, .5,
+                                          .6, .7, .8, .9]),
                fused_train_steps=100,
                fit_seed=0,
                predict_seed=42,
                num_samples=10000,
                init_params=None,
                calculate_observable_fn=calc_total_infections,
-               opt_kwargs=dict(method='nelder-mead',
-                               options={'maxiter': 1000}),
                fit_all=True,):
     """An estimator that fits parameters for jesm_estimator to minimize the WIS.
 
@@ -103,11 +107,13 @@ class AriadneEstimator(estimator_base.Estimator):
     Args:
       jesm_estimator: an estimator_base.Estimator that you want to generate
         scale parameters for.
-      validation_time: an int representing the length of time you want to
-        predict.
+      validation_times: an iterable of int's representing the length of time you
+        want to calibrate predictions for, e.g. (14, 28, 42). The largest int
+        is treated as the validation_time, i.e. the forecast horizon in the
+        internal forecast validation_data split.
       train_steps: an int representing the number of train_steps when we refit
         jesm_estimator.
-      alpha: a jax.numpy.array representing the new PIs to use. Defaults to
+      interval_alpha: a jax.numpy.array representing the new PIs to use. Defaults to
         those used in FluSight.
       fused_train_steps: an int representing the number of train stesps to fuse
       fit_seed: an int used to seed the rng.
@@ -118,21 +124,22 @@ class AriadneEstimator(estimator_base.Estimator):
         use as the initial guess for the optimizer.
       calculate_observable_fn: A function that accepts an array of shape
         (location, time) and returns an observable with shape (location,).
-      opt_kwargs: Additional arguments passed to sp.optimize.minimize.
       fit_all: Bool. If true, refits all the estimators in place.
     """
     self.jesm_estimator = jesm_estimator
-    self.validation_time = validation_time
+    self.validation_times = sorted(validation_times)
+    self.validation_time = self.validation_times[-1]
     self.train_steps = train_steps
-    self.alpha = alpha
+    self._interval_alpha = interval_alpha
+    self._scale_params = None
     self.fused_train_steps = fused_train_steps
     self.fit_seed = fit_seed
     self.predict_seed = predict_seed
     self.num_samples = num_samples
     self.init_params = init_params
-    self.opt_kwargs = opt_kwargs
     self.calculate_observable_fn = calculate_observable_fn
     self.fit_all = fit_all
+    self.small_estimator_is_ready_ = False
 
   def split_training_data(self, train_inf, validation_time):
     """Split the data into train and validation sets.
@@ -177,33 +184,28 @@ class AriadneEstimator(estimator_base.Estimator):
     # Is this necessary?
     self.small_estimator = copy.deepcopy(self.jesm_estimator)
     self.small_estimator.fit(small_train_data)
-    self.refit_estimator_ = True
+    self.small_estimator_is_ready_ = True
     return
 
-  def _check_refitted(self):
-    """Check if we have refit our estimator on the new, smaller train data."""
-    if not hasattr(self, 'refit_estimator_') or not self.refit_estimator_:
-      return False
-    return True
-
-  def update_validation_time(self, validation_time):
+  def update_validation_times(self, validation_times):
     """Update the split day.
 
     Args:
       validation_time: int representing the new split day
     """
-    self.validation_time = validation_time
-    self.refit_estimator_ = False
+    self.validation_times = sorted(validation_times)
+    self.validation_time = self.validation_times[-1]
+    self.small_estimator_is_ready_ = False
     self.is_trained_ = False
     return
 
-  def update_alpha(self, alpha):
+  def update_interval_alpha(self, interval_alpha):
     """Update the alpha.
 
     Args:
-      alpha: a jnp.array representing the new PIs to use
+      interval_alpha: a jnp.array representing the new PIs to use
     """
-    self.alpha = alpha
+    self._interval_alpha = interval_alpha
     self.is_trained_ = False
     return
 
@@ -228,9 +230,10 @@ class AriadneEstimator(estimator_base.Estimator):
       train_data: An xr.Dataset representing the training data. We split this
         into train and validation data using self.validation_time.
     Returns:
-      scale_params: A series of floats representing the scale of the Noraml
-        distributions to sample mech_params from to minimize the WIS on the
-        validation data.
+      self
+      Side effect: updates scale_params: A series of floats representing the
+        scale of the Normal distributions to sample mech_params from to minimize
+        the WIS on the validation data.
     """
 
     def sample_based_weighted_interval_score(predicted_samples,
@@ -270,7 +273,8 @@ class AriadneEstimator(estimator_base.Estimator):
       wis = interval_score.dot(w) / len(interval_score)
       return wis
 
-    def average_wis_of_observations(scale, rngkey, validation_inf):
+    def average_wis_of_observations(scale, rngkey, validation_inf,
+                                    validation_times):
       """Calculate the average WIS over all locations and samples.
 
       For a given set of validation_infections, calculate the WIS of our
@@ -283,6 +287,9 @@ class AriadneEstimator(estimator_base.Estimator):
         rngkey: A jax.random.PRNGKey
         validation_inf: A xr.DataArray of shape (location, time) representing
           the infections in our validation window.
+        validation_times: an interable of ints to describe initial slices of
+          time over which to score the calibration. E.g. the first 14 days
+          and the initial 42 days.
 
       Returns:
         average_wis: A float representing the WIS averaged over all samples and
@@ -290,48 +297,67 @@ class AriadneEstimator(estimator_base.Estimator):
       """
       calculate_observable_fn = self.calculate_observable_fn
       scale = jnp.asarray([scale])
-      observations = jnp.asarray(calculate_observable_fn(validation_inf))
       # Assumes estimator has been fit already
       self.small_estimator.sample_mech_params_fn = functools.partial(
           _helper_sample_mech_params,
-          initial_mech_params=self.small_estimator.mech_params,
+          initial_mech_params=self.small_estimator.mech_params_for_jax_code,
           scale=scale,
           rand_fun=tfd.Normal)
       prediction_dist = self.small_estimator.predict(validation_inf,
                                                      self.num_samples)
-      predictions = calculate_observable_fn(prediction_dist)
-      return jax.numpy.mean(
-          jax.vmap(sample_based_weighted_interval_score,
-                   in_axes=(0, 0, None))(predictions, observations, self.alpha))
+      result = 0.
+      for validation_time in validation_times:
+        validation_slice = validation_inf.isel(time=slice(validation_time))
+        prediction_slice = prediction_dist.isel(time=slice(validation_time))
+        observations = jnp.asarray(
+            calculate_observable_fn(validation_slice.new_infections))
+        predictions = calculate_observable_fn(prediction_slice)
+        current_result = jax.numpy.mean(
+            jax.vmap(sample_based_weighted_interval_score,
+                     in_axes=(0, 0, None))(
+                predictions, observations, self._interval_alpha))
+        result += current_result
+      print(f'called average_wis with scale {scale}, got value {result}')
+      return result
 
-    # Refit the estimator if needed
-    if not self._check_refitted() or self.fit_all:
+    # Refit the small estimator if needed
+    if (not self.small_estimator_is_ready_ or self.fit_all or
+        not self.train_data.equals(train_data)):
       print('Something changed - refitting')
-      self.refit_estimator(train_data)
-
-    # Check that training data hasn't changed
-    if not self.train_data.equals(train_data):
-      print('Training data changed - refitting')
       self.refit_estimator(train_data)
 
     # Initialize the scales, they are the same for all locations
     init_params = self.init_params
+    num_param = self.small_estimator.mech_params.shape[-1]
     if init_params is None:
-      init_params = -jnp.ones(self.small_estimator.mech_params.shape[-1])
+      init_params = -1.0 * jnp.ones(num_param)
 
     key = jax.random.PRNGKey(self.fit_seed)
     key, subkey = jax.random.split(key)
     average_wis_partial = functools.partial(
         average_wis_of_observations,
-        validation_inf=self.validation_data.new_infections,
+        validation_inf=self.validation_data,
+        validation_times=self.validation_times,
         rngkey=subkey)
 
-    opt = tf_common.wrap_minimize(average_wis_partial, init_params,
-                                  **self.opt_kwargs)
-    self.opt = opt
+    criterion = average_wis_partial
+
+    # First search diagonally.
+    x = init_params
+    direction = 0.5 * np.ones_like(x)
+    x, _, _ = linear_minimize(criterion, x, direction)
+
+    # Iteratively search along each dimension with progressively smaller
+    # step sizes.
+    num_iterations = 2
+    directions = 0.2 * np.eye(len(x))
+    for _ in range(num_iterations):
+      for direction in directions:
+        x, _, _ = linear_minimize(criterion, x, direction)
+      directions /= 2.0
+
     self.is_trained_ = True
-    # Return deltas
-    self.scale_params = opt.x
+    self._scale_params = x
 
     try:
       self.jesm_estimator._check_fitted()
@@ -344,24 +370,78 @@ class AriadneEstimator(estimator_base.Estimator):
 
     return self
 
-  def predict(self, test_data):
+  def predict(self, test_data, num_samples, seed=0):
     """Predict using new scale parameters."""
     self._check_trained()
-    self.jesm_estimator.sample_mech_params_fn = functools.partial(
+    self.sample_mech_params_fn = functools.partial(
         _helper_sample_mech_params,
-        initial_mech_params=self.small_estimator.mech_params,
-        scale=self.scale_params,
+        initial_mech_params=self.jesm_estimator.mech_params_for_jax_code,
+        scale=self._scale_params,
         rand_fun=tfd.Normal)
-
+    self.jesm_estimator.sample_mech_params_fn = self.sample_mech_params_fn
     predictions = self.jesm_estimator.predict(
-        test_data,
-        num_samples=self.num_samples)
+        test_data, num_samples=num_samples, seed=seed)
     return predictions
+
+  @property
+  def interval_alpha(self):
+    return self._interval_alpha
+
+  @property
+  def scale_params(self):
+    self._check_trained()
+    return xr.DataArray(
+        np.exp(self._scale_params),
+        dims=('param',),
+        coords={
+            'param': list(self.jesm_estimator.mech_model.encoded_param_names)
+        })
+
+  @property
+  def mech_params(self):
+    self._check_trained()
+    return self.jesm_estimator.mech_params
+
+  @property
+  def encoded_mech_params(self):
+    self._check_trained()
+    return self.jesm_estimator.encoded_mech_params
+
+  @property
+  def mech_params_for_jax_code(self):
+    self._check_trained()
+    return self.jesm_estimator.mech_params_for_jax_code
+
+  @property
+  def epidemic_observables(self):
+    self._check_trained()
+    return self.jesm_estimator.epidemic_observables
+
+  @property
+  def observables_loc_scale_hat(self):
+    self._check_trained()
+    return self.jesm_estimator.observables_loc_scale_hat
+
+  @property
+  def alpha(self):
+    self._check_trained()
+    return self.jesm_estimator.alpha
+
+  @property
+  def intercept(self):
+    self._check_trained()
+    return self.jesm_estimator.intercept
+
+  @property
+  def params_(self):
+    """Unoffical raw access for stat_mech models."""
+    self._check_trained()
+    return self.jesm_estimator.params_
 
 
 def get_estimator_dict(
-    validation_time=14,
-    train_steps=10000,
+    validation_times=(14, 28, 42),
+    train_steps=100000,
     num_samples=100,
     fit_all=True):
   estimator_dict = {}
@@ -370,7 +450,7 @@ def get_estimator_dict(
     if hasattr(small_estimator, 'mech_model'):
       estimator_dict['AE_' + name] = AriadneEstimator(
           jesm_estimator=small_estimator,
-          validation_time=validation_time,
+          validation_times=validation_times,
           train_steps=train_steps,
           num_samples=num_samples,
           fit_all=fit_all)

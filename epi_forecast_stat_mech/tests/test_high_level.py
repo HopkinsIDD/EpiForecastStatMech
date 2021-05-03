@@ -37,6 +37,9 @@ def create_synthetic_dataset(
       num_epidemics,
       num_time_steps=train_length+prediction_length)
 
+  # This puts slightly more stress on the predict's time output.
+  trajectories['time'] = trajectories.time + 50
+
   train_data, test_data = run_on_data.train_test_split_time(
       trajectories, trajectories.time[-prediction_length])
 
@@ -141,9 +144,9 @@ class TestEstimatorDictEstimator(parameterized.TestCase):
     self.assertLen(predictions.sample, num_samples)
 
   @parameterized.parameters(
-      dict(estimator_name='Laplace_Gaussian_PL_Linear'),
-      dict(estimator_name='None_VC_Linear_ObsEnc'),
-      dict(estimator_name='Laplace_Turner_Linear_ObsEnc'),
+      dict(estimator_name='LSML_Gaussian_PL_Linear_ObsEnc'),
+      dict(estimator_name='LSML_VC_PlainLinear_ObsEnc'),
+      dict(estimator_name='LSML_Turner_Linear_ObsEnc_6wk_plugin'),
   )
   def test_EstimatorDictEstimatorWithCoef(self, estimator_name):
     """Verify we can fit and predict from the named estimator.

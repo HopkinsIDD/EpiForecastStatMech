@@ -23,7 +23,7 @@ import flax.nn.initializers
 
 Array = Union[float, jnp.DeviceArray, np.ndarray]
 
-
+# TODO(mcoram): Add static_covariates here, perhaps, e.g. to access population.
 EpidemicsRecord = collections.namedtuple("EpidemicsRecord", [
     "t", "infections_over_time", "cumulative_infections", "dynamic_covariates"
 ])
@@ -100,6 +100,29 @@ def OverDispersedPoisson(mean, overdispersion):
       validate_args=False)
 
 
+def initialize_mech_model_stack(rng, mech_model, data, epidemics):
+  """Initialize a stack of mech_models."""
+  num_locations = data.sizes["location"]
+  rng_per_location = jax.random.split(rng, num_locations)
+
+  static_covariate_names = data.static_covariate.values
+  if "dynamic_covariate" in data:
+    dynamic_covariate_names = data.dynamic_covariate.values
+  else:
+    dynamic_covariate_names = []
+  mech_params = jax.vmap(mech_model.init_parameters,
+                         [0, 0, None, None])(rng_per_location, epidemics,
+                                             static_covariate_names,
+                                             dynamic_covariate_names)
+  return mech_params
+
+
+def K_initializer(_rng, epidemic, _static_covariate_names,
+                  _dynamic_covariate_names):
+  current_total_infected = jnp.nansum(epidemic.infections_over_time)
+  return current_total_infected * 1.1 + 1000.
+
+
 class MechanisticModel:
   """Abstract class representing mechanistic models."""
 
@@ -136,17 +159,20 @@ class MechanisticModel:
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` of lenth `length.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
       rng: random number generator of type `jax.random.PRNG`.
       observed_epidemics: array representing number of infections as a function
         of time at the observed time course of the epidemics.
-      length: number of time intervals for which to forecast the epidemics.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to include the `observed_epidemics` in the
         output.
 
@@ -157,7 +183,7 @@ class MechanisticModel:
     ...
 
   @abc.abstractmethod
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
     ...
 
@@ -251,22 +277,27 @@ class IntensityModel(MechanisticModel):
       parameters,
       rng,
       observed_epidemic_record,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemic` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
 
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
     Args:
       parameters: parameters of the mechanistic model.
       rng: PRNG to use for sampling.
       observed_epidemic_record: initial epidemics trajectory to continue.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemic_record) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemic_record.t)
+    assert length >= 0
+
     def _transition(state_and_rng, new_cases_and_params):
       state, rng = state_and_rng
       new_cases, params = new_cases_and_params
@@ -309,8 +340,15 @@ class IntensityModel(MechanisticModel):
     """Optionally return quantities that we may wish to constrain."""
     return {}
 
+
 class StepBasedViboudChowellModel(IntensityModel):
   """ViboudChowell mechanistic model."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   @property
   def step_based_param_names(self):
@@ -354,9 +392,9 @@ class StepBasedViboudChowellModel(IntensityModel):
         jnp.isnan(initial_record.cumulative_infections), 0.,
         initial_record.cumulative_infections)
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([2., .9, .9, 200000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, K_initializer(*pargs)]))
 
   def _split_and_scale_parameters(self, parameters):
     """Splits parameters and scales them appropriately.
@@ -375,6 +413,12 @@ class StepBasedViboudChowellModel(IntensityModel):
 
 class StepBasedGaussianModel(IntensityModel):
   """Gaussian mechanistic model."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def _intensity(self, parameters, state):
     """Computes intensity at time `t` given `parameters`."""
@@ -410,11 +454,11 @@ class StepBasedGaussianModel(IntensityModel):
     return m, jnp.exp(log_s), jnp.exp(log_k)
 
   def encode_params(self, parameters):
-    return jnp.concatenate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
+    return jnp.concatenate((parameters[jnp.array([0])], jnp.log(parameters[1:])), axis=-1)
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([100., 100., 1000.]))
+    return self.encode_params(jnp.asarray([100., 100., K_initializer(*pargs)]))
 
   @property
   def step_based_param_names(self):
@@ -425,10 +469,132 @@ class StepBasedGaussianModel(IntensityModel):
     return ("m", "log_s", "log_K")
 
 
+class StepBasedGeneralizedMultiplicativeGrowthModel(IntensityModel):
+  """GeneralizedMultiplicativeGrowth mechanistic model.
+
+  This clone introduces a power on the damping term. Additionally,
+  the multiplicative factor is computed as an exponential of the term with
+  an extra term forcing termination as K is reached.
+  """
+
+  new_infection_distribution: Callable = OverDispersedPoisson
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
+  @property
+  def step_based_param_names(self):
+    return ("gamma", "beta", "p", "K")
+
+  def encode_params(self, parameters):
+    return jnp.log(parameters)
+
+  @property
+  def step_based_encoded_param_names(self):
+    return ("log_gamma", "log_beta", "log_p", "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((.1, .1, .1, .1))
+
+  def _split_and_scale_parameters(self, parameters):
+    """Splits parameters and scales them appropriately.
+
+
+    Args:
+      parameters: array containing parametrization of the model.
+
+    Returns:
+      (gamma, beta, p, K) parameters.
+    """
+    tuple_form = (gamma, beta, p, K) = jnp.exp(parameters)
+    return tuple_form
+
+  def init_parameters(self, *pargs):
+    """Returns reasonable `parameters` for an initial guess."""
+    return self.encode_params(
+        jnp.asarray([0.5, 0.75, 1., K_initializer(*pargs)]))
+
+  def _initial_state(self, parameters, initial_record):
+    """Initializes the hidden state of the model based on initial data."""
+    del parameters  # unused
+    return (jnp.maximum(jnp.nan_to_num(initial_record.infections_over_time), 1),
+            jnp.nan_to_num(initial_record.cumulative_infections))
+
+  def _update_state(self, parameters, state, o):
+    """Computes an update to the internal state of the model."""
+    o_hat, unused_overdispersion = self._intensity(parameters, state)
+    old_o_smooth, old_cumulative_cases = state
+    gamma, beta, p, K = self._split_and_scale_parameters(
+        parameters)
+    # Improve this: e.g. it should pay more attention to o when o is big.
+    eta = 0.25
+    o_smooth = eta * o + (1. - eta) * o_hat
+    cumulative_cases = old_cumulative_cases + o
+    # Skip the update if new_cases == o is np.nan.
+    final_o_smooth = jnp.where(
+        jnp.isnan(o),
+        old_o_smooth,
+        o_smooth)
+    final_cumulative_cases = jnp.where(
+        jnp.isnan(o),
+        old_cumulative_cases,
+        cumulative_cases)
+    return final_o_smooth, final_cumulative_cases
+
+  def _intensity(self, parameters, state):
+    """Computes intensity given `parameters`, `state`."""
+    gamma, beta, p, K = self._split_and_scale_parameters(
+        parameters)
+    old_o_smooth, cumulative_cases = state
+    susceptible = jnp.maximum(K - cumulative_cases, 0.1)
+    susceptible_frac = jnp.where(
+        K > cumulative_cases,
+        jnp.maximum(
+            1. - cumulative_cases / jnp.where(
+                K > cumulative_cases, K, cumulative_cases), 1E-12), 0.)
+    multiplier = jnp.where(
+        K > cumulative_cases,
+        jnp.exp(
+            beta * susceptible_frac ** p
+            - gamma
+            - old_o_smooth / susceptible
+            )
+        , 0.)
+    o_hat = multiplier * old_o_smooth
+    overdispersion = 2.
+    return (jnp.maximum(o_hat, 0.1), overdispersion,)
+
+  # These are kind of a compatibility layer thing.
+  @property
+  def param_names(self):
+    return self.step_based_param_names
+
+  @property
+  def encoded_param_names(self):
+    return self.step_based_encoded_param_names
+
+  def decode_params(self, parameters):
+    return jnp.exp(jnp.asarray(parameters))
+
+  def log_prior(self, parameters):
+    """Returns log_probability prior of the `parameters` of the model."""
+    return jnp.zeros_like(parameters)
+
+
 class StepBasedMultiplicativeGrowthModel(IntensityModel):
   """MultiplicativeGrowth mechanistic model."""
 
   new_infection_distribution: Callable = OverDispersedPoisson
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   @property
   def step_based_param_names(self):
@@ -458,9 +624,9 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
     tuple_form = (base, beta, K) = jnp.exp(parameters)
     return tuple_form
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([0.5, 0.75, 10000.]))
+    return self.encode_params(jnp.asarray([0.5, 0.75, K_initializer(*pargs)]))
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
@@ -514,6 +680,100 @@ class StepBasedMultiplicativeGrowthModel(IntensityModel):
     return jnp.zeros_like(parameters)
 
 
+class StepBasedSimpleMultiplicativeGrowthModel(IntensityModel):
+  """SimpleMultiplicativeGrowth mechanistic model."""
+
+  new_infection_distribution: Callable = OverDispersedPoisson
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
+  @property
+  def step_based_param_names(self):
+    return ("beta", "K")
+
+  def encode_params(self, parameters):
+    return jnp.log(parameters)
+
+  @property
+  def step_based_encoded_param_names(self):
+    return ("log_beta", "log_K")
+
+  @property
+  def bottom_scale(self):
+    return jnp.asarray((.1, .1))
+
+  def _split_and_scale_parameters(self, parameters):
+    """Splits parameters and scales them appropriately.
+
+    Args:
+      parameters: array containing parametrization of the model.
+
+    Returns:
+      (beta, K) parameters.
+    """
+    tuple_form = (beta, K) = jnp.exp(parameters)
+    return tuple_form
+
+  def init_parameters(self, *pargs):
+    """Returns reasonable `parameters` for an initial guess."""
+    return self.encode_params(jnp.asarray([1.01, K_initializer(*pargs)]))
+
+  def _initial_state(self, parameters, initial_record):
+    """Initializes the hidden state of the model based on initial data."""
+    del parameters  # unused
+    return (jnp.maximum(jnp.nan_to_num(initial_record.infections_over_time), 1),
+            jnp.nan_to_num(initial_record.cumulative_infections))
+
+  def _update_state(self, parameters, state, o):
+    """Computes an update to the internal state of the model."""
+    o_hat, unused_overdispersion = self._intensity(parameters, state)
+    old_o_smooth, old_cumulative_cases = state
+    beta, K = self._split_and_scale_parameters(parameters)
+    # Improve this: e.g. it should pay more attention to o when o is big.
+    eta = 0.25
+    o_smooth = eta * o + (1. - eta) * o_hat
+    cumulative_cases = old_cumulative_cases + o
+    # Skip the update if new_cases == o is np.nan.
+    final_o_smooth = jnp.where(
+        jnp.isnan(o),
+        old_o_smooth,
+        o_smooth)
+    final_cumulative_cases = jnp.where(
+        jnp.isnan(o),
+        old_cumulative_cases,
+        cumulative_cases)
+    return final_o_smooth, final_cumulative_cases
+
+  def _intensity(self, parameters, state):
+    """Computes intensity given `parameters`, `state`."""
+    beta, K = self._split_and_scale_parameters(parameters)
+    old_o_smooth, cumulative_cases = state
+    multiplier = beta * jnp.maximum(0., (1. - cumulative_cases / K))
+    o_hat = multiplier * old_o_smooth
+    overdispersion = 2.
+    return (jnp.maximum(o_hat, 0.1), overdispersion,)
+
+  # These are kind of a compatibility layer thing.
+  @property
+  def param_names(self):
+    return self.step_based_param_names
+
+  @property
+  def encoded_param_names(self):
+    return self.step_based_encoded_param_names
+
+  def decode_params(self, parameters):
+    return jnp.exp(jnp.asarray(parameters))
+
+  def log_prior(self, parameters):
+    """Returns log_probability prior of the `parameters` of the model."""
+    return jnp.zeros_like(parameters)
+
+
 # TODO(jamieas): unify VC and Gaussian models as subclasses of `IntensityModel`.
 # TODO(dkochkov) add pytype annotations, refer to decided `EpidemicsRecord`.
 # TODO(dkochkov) consider moving paramteres to flax params.
@@ -526,6 +786,12 @@ class ViboudChowellModel(MechanisticModel):
   # that has a `.predict` and `log_prob` method. Typically, this is a TensorFlow
   # Probability distribution.
   new_infection_distribution: Callable = FastPoisson  # pylint: disable=g-bare-generic
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def log_prior(self, parameters):
     r, a, p, k = self.split_and_scale_parameters(parameters)
@@ -574,9 +840,9 @@ class ViboudChowellModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((.1, .1, .1, .1))
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([2., .9, .9, 250000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, K_initializer(*pargs)]))
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
@@ -590,22 +856,27 @@ class ViboudChowellModel(MechanisticModel):
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
       rng: PRNG to use for sampling.
       observed_epidemics: initial epidemics trajectory to continue.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemics) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemics.t)
+    assert length >= 0
     cumulative_cases = observed_epidemics.cumulative_infections[-1]
     def _step(rng_and_cumulative, _):
       rng, cumulative_cases = rng_and_cumulative
@@ -647,6 +918,12 @@ class GaussianModel(MechanisticModel):
   # Probability distribution.
   new_infection_distribution: Callable = FastPoisson  # pylint: disable=g-bare-generic
 
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
   def log_prior(self, parameters):
     """Returns log_probability prior of the `parameters` of the model."""
     # TODO(dkochkov) consider adding real prior to the model.
@@ -678,7 +955,7 @@ class GaussianModel(MechanisticModel):
     return ("m", "s", "K")
 
   def encode_params(self, parameters):
-    return jnp.concatenate((parameters[[0]], jnp.log(parameters[1:])), axis=-1)
+    return jnp.concatenate((parameters[jnp.array([0])], jnp.log(parameters[1:])), axis=-1)
 
   @property
   def encoded_param_names(self):
@@ -688,9 +965,10 @@ class GaussianModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((3., .1, .1))
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([100., 100., 1000.]))
+    return self.encode_params(
+        jnp.asarray([100., 100., K_initializer(*pargs)]))
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the log likelihood of `epidemics` given `parameters`."""
@@ -704,10 +982,13 @@ class GaussianModel(MechanisticModel):
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` by lenth `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
@@ -715,13 +996,15 @@ class GaussianModel(MechanisticModel):
       observed_epidemics: a namedtuple containing information about the initial
         trajectory of the epidemics. Must contain fields `t` filed for time and
         `infections_over_time` for number infections on corresponding day.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemics) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemics.t)
+    assert length >= 0
     start_time = observed_epidemics.t[-1] + 1.  # first time to predict.
     def _step(rng_and_time, _):
       rng, t = rng_and_time
@@ -741,6 +1024,12 @@ class GaussianModel(MechanisticModel):
 class ViboudChowellModelPseudoLikelihood(ViboudChowellModel):
   """ViboudChowell mechanistic model with a pseudo-likelihood criterion."""
 
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
   def log_likelihood(self, parameters, epidemics):
     """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
     # We treat the calculations as if they are conditional on observation[0]
@@ -758,6 +1047,12 @@ class ViboudChowellModelPublished(ViboudChowellModel):
 
   C.f. equation 2 of https://doi.org/10.1016/j.idm.2017.08.001
   """
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def intensity(self, parameters, x):
     """Computes intensity given `parameters` and number of cumulative_cases."""
@@ -783,6 +1078,12 @@ class TurnerModel(MechanisticModel):
   """
 
   new_infection_distribution: Callable = FastPoisson  # pylint: disable=g-bare-generic
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
@@ -846,31 +1147,36 @@ class TurnerModel(MechanisticModel):
   def bottom_scale(self):
     return jnp.asarray((.1, .1, .1, .1))
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([2., .9, .9, 250000.]))
+    return self.encode_params(jnp.asarray([2., .9, .9, K_initializer(*pargs)]))
 
   def predict(
       self,
       parameters,
       rng,
       observed_epidemics,
-      length,
+      dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemics` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       parameters: parameters of the mechanistic model.
       rng: PRNG to use for sampling.
       observed_epidemics: initial epidemics trajectory to continue.
-      length: how many steps to unroll epidemics for.
+      dynamic_covariates: np array of time x dynamic_covariate.
       include_observed: whether to prepend the observed epidemics.
 
     Returns:
       trajectory of predicted infections of length `length` or
       `len(observed_epidemics) + length` if `include_observed` is True.
     """
+    length = dynamic_covariates.shape[0] - len(observed_epidemics.t)
+    assert length >= 0
     cumulative_cases = observed_epidemics.cumulative_infections[-1]
     def _step(rng_and_cumulative, _):
       rng, cumulative_cases = rng_and_cumulative
@@ -890,6 +1196,12 @@ class TurnerModel(MechanisticModel):
 @dataclasses.dataclass
 class GaussianModelPseudoLikelihood(GaussianModel):
   """Mechanistic model of Gaussian shape with a pseudo-likelihood criterion."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def log_likelihood(self, parameters, epidemics):
     """Returns the (pseudo) log likelihood of `epidemics` given `parameters`."""
@@ -993,7 +1305,8 @@ class DynamicIntensityModel(IntensityModel):
     return jnp.asarray(
         [self.bottom_scale_dict[key] for key in self.encoded_param_names])
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
+    # TODO(mcoram): Restructure Dynamic initialization to use *pargs here.
     return self.init_flat
 
   def log_prior(self, parameters):
@@ -1006,6 +1319,7 @@ class DynamicIntensityModel(IntensityModel):
         parameters, epidemic_record.dynamic_covariates)
     return super().log_likelihood(time_dep_params, epidemic_record)
 
+
   def predict(
       self,
       flat_parameters,
@@ -1014,7 +1328,10 @@ class DynamicIntensityModel(IntensityModel):
       dynamic_covariates,
       include_observed=True
   ):
-    """Samples a trajectory continuing `observed_epidemic` by length `length`.
+    """Samples a trajectory continuing `observed_epidemic`.
+
+    The `length` of time that will be simulated is the time accounted for
+    in dynamic_covariates, not accounted for in observed_epidemic record.
 
     Args:
       flat_parameters: parameters of the mechanistic model.
@@ -1030,15 +1347,19 @@ class DynamicIntensityModel(IntensityModel):
     parameters = self.unravel(flat_parameters)
     time_dep_params = self.DynamicModule.call(
         parameters, dynamic_covariates)
-    length = dynamic_covariates.shape[0] - len(observed_epidemic_record.t)
-    assert length >= 0
     return super().predict(time_dep_params, rng, observed_epidemic_record,
-                           length, include_observed)
+                           dynamic_covariates, include_observed)
 
 
 class DynamicMultiplicativeGrowthModel(DynamicIntensityModel,
                                        StepBasedMultiplicativeGrowthModel):
   """MultiplicativeGrowth mechanistic model with dynamic variable utilization."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def __init__(self, rng, dynamic_covariate):
     self.bottom_scale_dict = collections.defaultdict(lambda: 0.1)
@@ -1064,6 +1385,44 @@ class DynamicMultiplicativeGrowthModel(DynamicIntensityModel,
       return jnp.concatenate((log_base, log_beta, log_K), axis=-1)
 
 
+class DynamicGeneralizedMultiplicativeGrowthModel(DynamicIntensityModel,
+                                       StepBasedGeneralizedMultiplicativeGrowthModel):
+  """GeneralizedMultiplicativeGrowth mechanistic model with dynamic variable utilization."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
+
+  def __init__(self, rng, dynamic_covariate):
+    self.bottom_scale_dict = collections.defaultdict(lambda: 0.1)
+    super().__init__(rng, dynamic_covariate)
+
+  class DynamicModule(nn.Module):
+
+    def apply(self, x):
+      log_gamma_module = ConstantModule.partial(
+          name="log_gamma",
+          init=jnp.reshape(jnp.log(0.5), (1,)))
+      log_beta_module = nn.Dense.partial(
+          name="log_beta",
+          features=1,
+          kernel_init=flax.nn.initializers.zeros,
+          bias_init=constant_initializer(jnp.log(0.75)))
+      log_p_module = ConstantModule.partial(
+          name="log_p",
+          init=jnp.reshape(jnp.log(1.), (1,)))
+      log_K_module = ConstantModule.partial(
+          name="log_K",
+          init=jnp.reshape(jnp.log(10000.), (1,)))
+      log_gamma = log_gamma_module(x)
+      log_beta = log_beta_module(x)
+      log_p = log_p_module(x)
+      log_K = log_K_module(x)
+      return jnp.concatenate((log_gamma, log_beta, log_p, log_K), axis=-1)
+
+
 def discrete_seir_update(susceptible, exposed, infected, exposure_rate,
                          symptom_rate, recovery_rate):
   """All quantities are in per-population units."""
@@ -1078,6 +1437,12 @@ class StepBasedBaselineSEIRModel(IntensityModel):
   """Baseline SEIR mechanistic model."""
 
   new_infection_distribution: Callable = FastPoisson
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   @property
   def step_based_param_names(self):
@@ -1109,9 +1474,10 @@ class StepBasedBaselineSEIRModel(IntensityModel):
                   K) = jnp.exp(parameters)
     return tuple_form
 
-  def init_parameters(self):
+  def init_parameters(self, *pargs):
     """Returns reasonable `parameters` for an initial guess."""
-    return self.encode_params(jnp.asarray([0.5, 0.3, 0.3, 10000.]))
+    return self.encode_params(
+        jnp.asarray([0.5, 0.3, 0.3, K_initializer(*pargs)]))
 
   def _initial_state(self, parameters, initial_record):
     """Initializes the hidden state of the model based on initial data."""
@@ -1159,6 +1525,12 @@ class StepBasedBaselineSEIRModel(IntensityModel):
 class DynamicBaselineSEIRModel(DynamicIntensityModel,
                                StepBasedBaselineSEIRModel):
   """BaselineSEIR mechanistic model with dynamic variable utilization."""
+
+  def __hash__(self):
+    return id(self)
+
+  def __eq__(self, other):
+    return self is other
 
   def __init__(self, rng, dynamic_covariate):
     self.bottom_scale_dict = collections.defaultdict(lambda: 0.1)

@@ -72,15 +72,18 @@ class MechanisticModelsTest(parameterized.TestCase):
   def testShapes(self, mech_model_cls, observed_duration, trajectory_length):
     """Tests that mechanistic models methods return values of expected shape."""
     mech_model = mech_model_cls()
-    mech_model_params = mech_model.init_parameters()
     rng = jax.random.PRNGKey(42)
+    rng1, rng2 = jax.random.split(rng, 2)
     observed_epidemics = EpidemicsRecord(
         np.arange(observed_duration).astype(np.float32),
         np.arange(observed_duration).astype(np.float32),
         np.cumsum(np.arange(observed_duration).astype(np.float32)),
         np.zeros((observed_duration, 1)))
+    dynamic_covariates = np.zeros((observed_duration + trajectory_length, 0))
+    mech_model_params = mech_model.init_parameters(rng1, observed_epidemics,
+                                                   ['dummy'], ['dummy'])
     predicted_epidemics_trajectory = mech_model.predict(
-        mech_model_params, rng, observed_epidemics, trajectory_length)
+        mech_model_params, rng2, observed_epidemics, dynamic_covariates)
     actual_shape = predicted_epidemics_trajectory.shape
     expected_shape = (observed_duration + trajectory_length,)
     self.assertEqual(actual_shape, expected_shape)
@@ -107,17 +110,21 @@ class MechanisticModelsTest(parameterized.TestCase):
   ):
     """Test output shapes for models that allow time dependent parameters."""
     mech_model = mech_model_cls()
-    mech_model_params = np.tile(
-        np.expand_dims(mech_model.init_parameters(), 0),
-        (observed_duration + trajectory_length, 1))
     rng = jax.random.PRNGKey(42)
+    rng1, rng2 = jax.random.split(rng, 2)
     observed_epidemics = EpidemicsRecord(
         np.arange(observed_duration).astype(np.float32),
         np.arange(observed_duration).astype(np.float32),
         np.cumsum(np.arange(observed_duration).astype(np.float32)),
         np.zeros((observed_duration, 0)))
+    dynamic_covariates = np.zeros((observed_duration + trajectory_length, 0))
+    mech_model_params1 = mech_model.init_parameters(rng1, observed_epidemics,
+                                                    ['dummy'], ['dummy'])
+    mech_model_params = np.tile(
+        np.expand_dims(mech_model_params1, 0),
+        (observed_duration + trajectory_length, 1))
     predicted_epidemics_trajectory = mech_model.predict(
-        mech_model_params, rng, observed_epidemics, trajectory_length)
+        mech_model_params, rng2, observed_epidemics, dynamic_covariates)
     actual_shape = predicted_epidemics_trajectory.shape
     expected_shape = (observed_duration + trajectory_length,)
     self.assertEqual(actual_shape, expected_shape)
@@ -140,15 +147,17 @@ class MechanisticModelsTest(parameterized.TestCase):
     train, _ = run_on_data.train_test_split_time(data,
                                                  data.canonical_split_time)
 
-    rng1, rng = jax.random.split(jax.random.PRNGKey(42))
+    rng1, rng2, rng = jax.random.split(jax.random.PRNGKey(42), 3)
     mech_model = mech_model_cls(rng1, data.dynamic_covariate)
-    mech_model_params = mech_model.init_parameters()
     all_observed_epidemics = mechanistic_models.pack_epidemics_record_tuple(
         train)
     observed_epidemic, unused_record_rest = utils.split_along_axis(
         all_observed_epidemics, 0, 1)
     dynamic_covariates0 = data.dynamic_covariates.isel(location=0).transpose(
         'time', 'dynamic_covariate').data
+    mech_model_params = mech_model.init_parameters(
+        rng2, observed_epidemic, data.static_covariate.values,
+        data.dynamic_covariate.values)
 
     model_log_prob = mech_model.log_likelihood(mech_model_params,
                                                observed_epidemic)

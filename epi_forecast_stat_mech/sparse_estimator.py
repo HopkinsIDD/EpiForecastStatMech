@@ -291,16 +291,15 @@ class SparseEstimator(estimator_base.Estimator):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
     mech_params = self.mech_params_for_jax_code
-
+    dynamic_covariates = predict_lib.prepare_dynamic_covariates(
+        self.data, test_data)
     sample_mech_params_fn = getattr(
         self, 'sample_mech_params_fn', lambda rngkey, num_samples: jnp.swapaxes(
             jnp.broadcast_to(mech_params,
                              (num_samples,) + mech_params.shape), 1, 0))
-
-    return predict_lib.simulate_predictions(self.mech_model, mech_params,
-                                            self.data, self.epidemics,
-                                            test_data, num_samples, rng,
-                                            sample_mech_params_fn)
+    return predict_lib.simulate_dynamic_predictions(
+        self.mech_model, mech_params, self.data, self.epidemics,
+        dynamic_covariates, num_samples, rng, sample_mech_params_fn)
 
 
 def get_estimator_dict():

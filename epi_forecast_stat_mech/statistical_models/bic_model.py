@@ -54,7 +54,7 @@ class BICModel:
     return self.base_model.log_prior(parameters)
 
   def _count_nonzero(self, params):
-    param_list, _ = jax.tree_flatten(params)
+    param_list, _ = tree_util.tree_flatten(params)
     return sum([
         soft_nonzero(p, self.nonzero_sharpness, self.nonzero_threshold).sum()
         for p in param_list])

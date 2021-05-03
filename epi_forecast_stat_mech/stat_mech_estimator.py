@@ -4,11 +4,9 @@ import collections
 import dataclasses
 import functools
 import itertools
-import logging
 from typing import Callable
 
 import jax
-from jax.experimental import optimizers
 import jax.numpy as jnp
 import numpy as np
 import xarray
@@ -20,11 +18,14 @@ tfd = tfp.distributions
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import estimator_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech import mask_time  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech import optim_lib
 from epi_forecast_stat_mech.mechanistic_models import mechanistic_models  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import observables  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.mechanistic_models import predict_lib  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import base as stat_base  # pylint: disable=g-bad-import-order
 from epi_forecast_stat_mech.statistical_models import network_models  # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.statistical_models import no_stat_model # pylint: disable=g-bad-import-order
+from epi_forecast_stat_mech.statistical_models import probability
 
 
 LogLikelihoods = collections.namedtuple(
@@ -33,6 +34,9 @@ LogLikelihoods = collections.namedtuple(
      "mech_log_prior",
      "mech_log_likelihood",
      "stat_log_likelihood"])
+
+
+LEARNING_RATE_DEFAULT = 5E-4
 
 
 @dataclasses.dataclass
@@ -48,7 +52,9 @@ class StatMechEstimator(estimator_base.Estimator):
   # TODO(mcoram): Resolve whether the "30" is deprecated hack or still useful.
   time_mask_fn: Callable[..., np.array] = functools.partial(
       mask_time.make_mask, min_value=30)
+  preprocess_fn: Callable[..., np.array] = lambda x: x
   fit_seed: int = 42
+  learning_rate: float = LEARNING_RATE_DEFAULT
   observable_choice: observables.Observables = dataclasses.field(
       default_factory=lambda: observables.ObserveSpecified(["log_K"]))
 
@@ -86,7 +92,6 @@ class StatMechEstimator(estimator_base.Estimator):
                                        [None, 0, 0])
     epidemic_observables = epidemic_observables_fn(mech_model, mech_params,
                                                    epidemics)
-    self.epidemic_observables = epidemic_observables
 
     statistical_log_likelihood = stat_model.log_likelihood(
         stat_params, covariates, epidemic_observables)
@@ -100,39 +105,36 @@ class StatMechEstimator(estimator_base.Estimator):
         stat_log_likelihood=statistical_log_likelihood)
 
   def fit(self, data):
-    train_steps = self.train_steps
     seed = self.fit_seed
+    rng = jax.random.PRNGKey(seed)
+    mech_rng, stat_rng = jax.random.split(rng, 2)
+
     data_model.validate_data_for_fit(data)
-    # TODO(dkochkov) consider a tunable module for preprocessing.
+    data = self.preprocess_fn(data)
+    data_model.validate_data_for_fit(data)
     data["total"] = (
         ("location", "time",), np.cumsum(
             data.new_infections.transpose("location", "time").values, -1))
-    num_locations = data.sizes["location"]
     self.data = data
-    self.covariates = covariates = data.static_covariates.transpose(
-        "location", "static_covariate").values
+    static_covariates = data.static_covariates.transpose(
+        "location", "static_covariate")
+    self.covariates = covariates = static_covariates.values
     self.epidemics = epidemics = (
         mechanistic_models.pack_epidemics_record_tuple(data))
     self.time_mask = self.time_mask_fn(data)
 
-    # Mechanistic model initialization
-    mech_params = jnp.stack([
-        self.mech_model.init_parameters() for _ in range(num_locations)])
+    mech_params = mechanistic_models.initialize_mech_model_stack(
+        mech_rng, self.mech_model, data, epidemics)
     epidemic_observables_fn = jax.vmap(self.observable_choice.observables,
                                        [None, 0, 0])
     epidemic_observables = epidemic_observables_fn(self.mech_model, mech_params,
                                                    epidemics)
 
     # Statistical model initialization
-    rng = jax.random.PRNGKey(seed)
-    stat_params = self.stat_model.init_parameters(rng, covariates,
+    stat_params = self.stat_model.init_parameters(stat_rng, covariates,
                                                   epidemic_observables)
     init_params = (stat_params, mech_params)
 
-    opt_init, opt_update, get_params = optimizers.adam(5e-4, b1=0.9, b2=0.999)
-    opt_state = opt_init(init_params)
-
-    @jax.value_and_grad
     def negative_log_prob(params):
       log_likelihoods = self._log_likelihoods(
           params, epidemics, covariates, self.mech_model, self.stat_model)
@@ -142,33 +144,12 @@ class StatMechEstimator(estimator_base.Estimator):
           mech_log_likelihood=mech_log_likelihood)
       return -1. * sum(jax.tree_leaves(jax.tree_map(jnp.sum, log_likelihoods)))
 
-    @jax.jit
-    def train_step(step, opt_state):
-      params = get_params(opt_state)
-      loss_value, grad = negative_log_prob(params)
-      opt_state = opt_update(step, grad, opt_state)
-      return opt_state, loss_value
-
-    # For some of these models (especially on accelerators), a single training
-    # step runs very quickly. Fusing steps together considerably improves
-    # performance.
-    @functools.partial(jax.jit, static_argnums=(1,))
-    def repeated_train_step(step, repeats, opt_state):
-      def f(carray, _):
-        step, opt_state, _ = carray
-        opt_state, loss_value = train_step(step, opt_state)
-        return (step + 1, opt_state, loss_value), None
-      (_, opt_state, loss_value), _ = jax.lax.scan(
-          f, (step, opt_state, 0.0), xs=None, length=repeats)
-      return opt_state, loss_value
-
-    for step in range(0, train_steps, self.fused_train_steps):
-      opt_state, loss_value = repeated_train_step(
-          step, self.fused_train_steps, opt_state)
-      if step % 1000 == 0:
-        logging.info(f"Loss at step {step} is: {loss_value}.")  # pylint: disable=logging-format-interpolation
-
-    self.params_ = get_params(opt_state)
+    self.params_ = optim_lib.adam_optimize(
+        negative_log_prob,
+        init_params,
+        train_steps=self.train_steps,
+        learning_rate=self.learning_rate,
+        fused_train_steps=self.fused_train_steps)
     self._is_trained = True
     return self
 
@@ -179,18 +160,19 @@ class StatMechEstimator(estimator_base.Estimator):
   def predict(self, test_data, num_samples, seed=0):
     self._check_fitted()
     rng = jax.random.PRNGKey(seed)
-
-    _, mech_params = self.params_
+    encoded_mech_params = self.mech_params_for_jax_code
+    dynamic_covariates = predict_lib.prepare_dynamic_covariates(
+        self.data, test_data)
 
     sample_mech_params_fn = getattr(
         self, "sample_mech_params_fn", lambda rngkey, num_samples: jnp.swapaxes(
-            jnp.broadcast_to(mech_params,
-                             (num_samples,) + mech_params.shape), 1, 0))
+            jnp.broadcast_to(encoded_mech_params,
+                             (num_samples,) + encoded_mech_params.shape), 1, 0))
 
-    return predict_lib.simulate_predictions(self.mech_model, mech_params,
-                                            self.data, self.epidemics,
-                                            test_data, num_samples, rng,
-                                            sample_mech_params_fn)
+    return predict_lib.simulate_dynamic_predictions(
+        self.mech_model, encoded_mech_params,
+        self.data, self.epidemics, dynamic_covariates,
+        num_samples, rng, sample_mech_params_fn)
 
   @property
   def mech_params(self):
@@ -204,12 +186,33 @@ class StatMechEstimator(estimator_base.Estimator):
     return predict_lib.encoded_mech_params_array(self.data, self.mech_model,
                                                  self.params_[1])
 
-  # TODO(mcoram): Implement mech_params_hat.
+  @property
+  def mech_params_for_jax_code(self):
+    return self.encoded_mech_params.values
+
+  @property
+  def epidemic_observables(self):
+    self._check_fitted()
+    _, mech_params = self.params_
+    epidemic_observables_fn = jax.vmap(self.observable_choice.observables,
+                                       [None, 0, 0])
+    my_observables = epidemic_observables_fn(self.mech_model, mech_params,
+                                             self.epidemics)
+    return my_observables
+
+  @property
+  def observables_loc_scale_hat(self):
+    self._check_fitted()
+    stat_params, _ = self.params_
+    return self.stat_model.get_loc_scale(stat_params, self.covariates,
+                                         self.epidemic_observables)
 
   @property
   def alpha(self):
     self._check_fitted()
-    if issubclass(self.stat_model.predict_module, network_models.LinearModule):
+    if (issubclass(self.stat_model.predict_module, network_models.LinearModule)
+        or issubclass(self.stat_model.predict_module,
+                      network_models.PlainLinearModule)):
       kernel, unused_intercept = self.stat_model.linear_coefficients(
           self.params_[0])
       assert kernel.shape[1] == len(self.epidemic_observables.keys()), (
@@ -229,7 +232,9 @@ class StatMechEstimator(estimator_base.Estimator):
   @property
   def intercept(self):
     self._check_fitted()
-    if issubclass(self.stat_model.predict_module, network_models.LinearModule):
+    if (issubclass(self.stat_model.predict_module, network_models.LinearModule)
+        or issubclass(self.stat_model.predict_module,
+                      network_models.PlainLinearModule)):
       unused_kernel, bias = self.stat_model.linear_coefficients(
           self.params_[0])
       assert bias.shape == (len(self.epidemic_observables.keys()),), (
@@ -246,80 +251,165 @@ class StatMechEstimator(estimator_base.Estimator):
                            (self.stat_model.__class__,))
 
 
-def laplace_prior(parameters, scale_parameter=1.):
-  return jax.tree_map(
-      lambda x: tfd.Laplace(
-          loc=jnp.zeros_like(x), scale=scale_parameter * jnp.ones_like(x)).
-      log_prob(x), parameters)
+def seven_day_time_smooth_helper_(x):
+  if "time" in x.dims:
+    return x.rolling(time=7, min_periods=4).mean()
+  else:
+    return x
+
+
+def seven_day_time_smooth(data):
+  return xarray.Dataset({
+      key: seven_day_time_smooth_helper_(x)
+      for key, x in data.data_vars.items()
+  })
+
+
+def const_covariates(data):
+  del data["static_covariates"]
+  del data["static_covariate"]
+  data["static_covariates"] = xarray.DataArray(
+      np.zeros((data.sizes["location"], 1)),
+      dims=["location", "static_covariate"])
+  return data
 
 
 def get_estimator_dict(
     train_steps=100000,
     fused_train_steps=100,
-    time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
     fit_seed=42,
-    list_of_prior_fns=(None, laplace_prior),
-    list_of_mech_models=(mechanistic_models.ViboudChowellModel,
-                         mechanistic_models.GaussianModel,
-                         mechanistic_models.ViboudChowellModelPseudoLikelihood,
-                         mechanistic_models.GaussianModelPseudoLikelihood,
-                         mechanistic_models.StepBasedMultiplicativeGrowthModel,
-                         mechanistic_models.StepBasedBaselineSEIRModel,
-                         mechanistic_models.ViboudChowellModelPublished,
-                         mechanistic_models.TurnerModel),
+    learning_rate=LEARNING_RATE_DEFAULT,
+    list_of_prior_fns=(probability.log_soft_mixed_laplace_on_kernels,),
+    list_of_mech_models=(
+        mechanistic_models.ViboudChowellModel, mechanistic_models.GaussianModel,
+        mechanistic_models.ViboudChowellModelPseudoLikelihood,
+        mechanistic_models.GaussianModelPseudoLikelihood,
+        mechanistic_models.StepBasedMultiplicativeGrowthModel,
+        mechanistic_models.StepBasedSimpleMultiplicativeGrowthModel,
+        mechanistic_models.StepBasedGeneralizedMultiplicativeGrowthModel,
+        mechanistic_models.StepBasedBaselineSEIRModel,
+        mechanistic_models.ViboudChowellModelPublished,
+        mechanistic_models.TurnerModel),
     list_of_stat_module=(network_models.LinearModule,
-                         network_models.PerceptronModule),
-    list_of_prior_names=("None", "Laplace"),
+                         network_models.PlainLinearModule,
+                         network_models.PerceptronModule, no_stat_model.Null),
+    list_of_time_mask_fn=(functools.partial(mask_time.make_mask, min_value=50),
+                          functools.partial(
+                              mask_time.make_mask,
+                              min_value=1,
+                              recent_day_limit=6 * 7),
+                          functools.partial(
+                              mask_time.make_mask,
+                              min_value=1,
+                              recent_day_limit=4 * 7)),
+    list_of_preprocess_fn=(lambda x: x, seven_day_time_smooth,
+                           const_covariates),
+    list_of_prior_names=("LSML",),
     list_of_mech_names=("VC", "Gaussian", "VC_PL", "Gaussian_PL",
-                        "MultiplicativeGrowth", "BaselineSEIR", "VCPub",
-                        "Turner"),
-    list_of_stat_names=("Linear", "MLP"),
-    list_of_observable_choices=(observables.InternalParams(),
-                                observables.ObserveSpecified(["log_K"])),
-    list_of_observable_choices_names=("ObsEnc", "ObsLogK")):
+                        "MultiplicativeGrowth", "SimpleMultiplicativeGrowth",
+                        "GeneralizedMultiplicativeGrowth", "BaselineSEIR",
+                        "VCPub", "Turner"),
+    list_of_stat_names=("Linear", "PlainLinear", "MLP", "Null"),
+    list_of_observable_choices=(observables.InternalParams(),),
+    list_of_observable_choices_names=("ObsEnc",),
+    list_of_time_mask_fn_names=("50cases", "6wk", "4wk"),
+    list_of_preprocess_fn_names=("Id", "7day", "ConstCov"),
+    list_of_error_model_names=("full", "plugin")):
 
   # TODO(mcoram): Resolve whether the time_mask_value of "50" is deprecated
   # hack or still useful.
   # Create an iterator
-  components_iterator = itertools.product(itertools.product(
-      itertools.product(list_of_prior_fns, list_of_mech_models),
-      list_of_stat_module), list_of_observable_choices)
-  names_iterator = itertools.product(itertools.product(
-      itertools.product(list_of_prior_names, list_of_mech_names),
-      list_of_stat_names), list_of_observable_choices_names)
+  components_iterator = itertools.product(
+      itertools.product(
+          itertools.product(
+              itertools.product(
+                  itertools.product(
+                      itertools.product(list_of_prior_fns, list_of_mech_models),
+                      list_of_stat_module), list_of_observable_choices),
+              list_of_time_mask_fn), list_of_preprocess_fn),
+      list_of_error_model_names)
+  names_iterator = itertools.product(
+      itertools.product(
+          itertools.product(
+              itertools.product(
+                  itertools.product(
+                      itertools.product(list_of_prior_names,
+                                        list_of_mech_names),
+                      list_of_stat_names), list_of_observable_choices_names),
+              list_of_time_mask_fn_names), list_of_preprocess_fn_names),
+      list_of_error_model_names)
 
   # Combine into one giant dictionary of predictions
   estimator_dictionary = {}
   for components, name_components in zip(components_iterator, names_iterator):
-    ((prior_fn, mech_model_cls), stat_module), observable_choice = components
-    (((prior_name, mech_name), stat_name),
-     observable_choice_name) = name_components
-    name_list = [prior_name, mech_name, stat_name, observable_choice_name]
+    ((((((prior_fn, mech_model_cls), stat_module), observable_choice),
+       time_mask_fn), preprocess_fn), error_model) = components
+    ((((((prior_name, mech_name), stat_name), observable_choice_name),
+       time_mask_fn_name), preprocess_fn_name),
+     error_model_name) = name_components
+    name_list = [prior_name, mech_name, stat_name]
+
+    # Check for unhelpful combinations here
+    # TODO(edklein): revisit if we should exclude more ConstCov models
+    if stat_name == "Null" and error_model_name == "plugin": continue
+    if stat_name == "Null" and preprocess_fn_name == "ConstCov": continue
+
     # To preserve old names, I'm dropping ObsLogK from the name.
-    if observable_choice_name == "ObsLogK":
-      name_list.pop()
+    if observable_choice_name != "ObsLogK":
+      name_list.append(observable_choice_name)
+    # To preserve old names, I'm dropping 50cases from the name.
+    if time_mask_fn_name != "50cases":
+      name_list.append(time_mask_fn_name)
+    # To preserve old names, I'm dropping Id from the name.
+    if preprocess_fn_name != "Id":
+      name_list.append(preprocess_fn_name)
+    if error_model_name != "full":
+      name_list.append(error_model_name)
     model_name = "_".join(name_list)
-    stat_model = network_models.NormalDistributionModel(
-        predict_module=stat_module,
-        log_prior_fn=prior_fn)
     mech_model = mech_model_cls()
+    if error_model != error_model_name:
+      raise ValueError(
+          f"Expected agreement b/w error_model and error_model_name: "
+          f"{error_model}, {error_model_name}"
+      )
+    if stat_name == "Null":
+      # there must be a better way to do this
+      stat_model = stat_module()
+    elif error_model_name == "full":
+      stat_model = network_models.NormalDistributionModel(
+          predict_module=stat_module,
+          log_prior_fn=prior_fn,
+          scale_eps=1E-2,
+          error_model="full")
+    elif error_model_name == "plugin":
+      stat_model = network_models.NormalDistributionModel(
+          predict_module=stat_module,
+          log_prior_fn=prior_fn,
+          scale_eps=mech_model.bottom_scale,
+          error_model="plugin")
+    else:
+      raise ValueError(f"Unexpected error_model_name: {error_model_name}")
+
     estimator_dictionary[model_name] = StatMechEstimator(
         train_steps=train_steps,
         stat_model=stat_model,
         mech_model=mech_model,
         fused_train_steps=fused_train_steps,
         time_mask_fn=time_mask_fn,
+        preprocess_fn=preprocess_fn,
         fit_seed=fit_seed,
+        learning_rate=learning_rate,
         observable_choice=observable_choice)
   estimator_dictionary["Laplace_VC_Linear_ObsChar1"] = StatMechEstimator(
       train_steps=train_steps,
       stat_model=network_models.NormalDistributionModel(
           predict_module=network_models.LinearModule,
-          log_prior_fn=laplace_prior),
+          log_prior_fn=probability.laplace_prior),
       mech_model=mechanistic_models.ViboudChowellModel(),
       fused_train_steps=fused_train_steps,
-      time_mask_fn=time_mask_fn,
+      time_mask_fn=functools.partial(mask_time.make_mask, min_value=50),
       fit_seed=fit_seed,
+      learning_rate=learning_rate,
       observable_choice=observables.ObserveSpecified([
           "log_r", "log_a", "log_characteristic_time",
           "log_characteristic_height"
