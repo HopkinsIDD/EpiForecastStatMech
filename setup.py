@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="EpiForecastStatMech",
-    version="0.1",
+    version="0.2",
     packages=setuptools.find_packages(),
     install_requires=[
         "absl-py",
@@ -12,8 +12,10 @@ setuptools.setup(
         "matplotlib",
         "seaborn",
         "sklearn",
-        "tensorflow",
-        "tensorflow_probability",
+        # "tensorflow",  # revert back to these when tfp 0.13 is released.
+        # "tensorflow_probability",
+        "tf-nightly",
+        "tfp-nightly",
         "jax",
         "jaxlib",
         "flax",

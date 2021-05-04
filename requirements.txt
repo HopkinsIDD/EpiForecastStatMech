@@ -12,6 +12,6 @@ flax
 dm-tree
 glmnet_py
 sklearn
-tensorflow
-tensorflow_probability
+tf-nightly
+tfp-nightly
 xarray
