@@ -17,6 +17,7 @@ setuptools.setup(
         "jax",
         "jaxlib",
         "flax",
+        "dm-tree",
         "glmnet_py",
         "xarray",
     ],
