@@ -71,6 +71,18 @@ def create_synthetic_dynamic_dataset(
 
   return train_data, test_data
 
+class TestHighLevelBug(absltest.TestCase):
+  """Tests if a weird bug is still present."""
+
+  def test_DimensionNameDropped(self):
+    # This test should fail, but the name 'location' is currently dropped on
+    # conversion to a pandas dataframe.
+    # If this test starts failing with df.index.name == 'location', it's fine to
+    # simply delete the test.
+    train_data, _ = create_synthetic_dataset()
+    df = train_data['new_infections'].to_pandas()
+    self.assertEqual(None, df.index.name)
+
 
 class TestHighLevelStatMech(absltest.TestCase):
   """Tests for StatMech high_level module."""
