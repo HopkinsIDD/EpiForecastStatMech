@@ -252,7 +252,7 @@ class StatMechEstimator(estimator_base.Estimator):
 
 
 def seven_day_time_smooth_helper_(x):
-  if "time" in x.dims:
+  if "time" in x.dims and not np.issubdtype(x.dtype, np.datetime64):
     return x.rolling(time=7, min_periods=4).mean()
   else:
     return x
