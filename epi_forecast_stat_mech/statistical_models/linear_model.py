@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import tensorflow_probability
-tfp = tensorflow_probability.experimental.substrates.jax
+tfp = tensorflow_probability.substrates.jax
 tfd = tfp.distributions
 
 Array = Union[jnp.DeviceArray, np.ndarray, float]

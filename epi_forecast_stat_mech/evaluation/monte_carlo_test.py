@@ -17,7 +17,7 @@ import xarray
 
 import tensorflow_probability
 
-tfp = tensorflow_probability.experimental.substrates.jax
+tfp = tensorflow_probability.substrates.jax
 tfd = tfp.distributions
 
 config.parse_flags_with_absl()  # Necessary for running on TPU.

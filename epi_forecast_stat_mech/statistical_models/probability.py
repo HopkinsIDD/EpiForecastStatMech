@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jax.scipy import special
 
 import tensorflow_probability
-tfp = tensorflow_probability.experimental.substrates.jax
+tfp = tensorflow_probability.substrates.jax
 tfd = tfp.distributions
 
 

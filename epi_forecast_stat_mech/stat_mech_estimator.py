@@ -12,7 +12,7 @@ import numpy as np
 import xarray
 
 import tensorflow_probability
-tfp = tensorflow_probability.experimental.substrates.jax
+tfp = tensorflow_probability.substrates.jax
 tfd = tfp.distributions
 
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
