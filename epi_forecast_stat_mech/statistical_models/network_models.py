@@ -1,13 +1,12 @@
 # Lint as: python3
 """Statistical models based on Neural Networks."""
-from typing import Any, Callable
 import dataclasses
-
+from typing import Any, Callable
 from epi_forecast_stat_mech.statistical_models import base
 from epi_forecast_stat_mech.statistical_models import probability as stat_prob
 from epi_forecast_stat_mech.statistical_models import tree_util
 
-from flax import nn
+from flax.deprecated import nn
 import jax
 import jax.numpy as jnp
 
