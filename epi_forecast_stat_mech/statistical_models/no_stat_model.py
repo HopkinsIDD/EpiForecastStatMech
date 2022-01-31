@@ -14,7 +14,7 @@ class Null(base.StatisticalModel):
   """Null statistical model.
 
   Attributes:
-    predict_module: flax.nn.Module that takes `inputs` and `output_size`
+    predict_module: flax.deprecated.nn.Module that takes `inputs` and `output_size`
       arguments and returns array of shape `[batch, output_size]` that will be
       used to predict locations of the gaussian distributed `observations` and
       possibly scales, depending on whether `error_model` is 'full'.
