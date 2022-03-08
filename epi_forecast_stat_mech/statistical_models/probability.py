@@ -6,8 +6,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy import special
 
-import tensorflow_probability
-tfp = tensorflow_probability.experimental.substrates.jax
+from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
 
 
@@ -110,8 +109,28 @@ def soft_abs(x, delta):
   return jnp.sqrt(delta**2 + x**2) - delta
 
 
-@functools.partial(jnp.vectorize, signature='(k)->()')
 def log_soft_mixed_laplace(x, a=0., b=0.5, delta=0.01, include_constants=False):
+  """A softened scale-mixture of Laplace priors.
+
+  Let S~InverseGamma(a, b); X_i |S=s ~[iid] Laplace(0, s).
+  This computes the log density of the marginal on X, except that |x_i| terms
+  are replaced with soft variants so that the function is twice continuously
+  differentiable.
+  """
+  partial = functools.partial(
+      log_soft_mixed_laplace_single,
+      a=a,
+      b=b,
+      delta=delta,
+      include_constants=include_constants)
+  return jnp.vectorize(partial, signature='(k)->()')(x)
+
+
+def log_soft_mixed_laplace_single(x,
+                                  a=0.,
+                                  b=0.5,
+                                  delta=0.01,
+                                  include_constants=False):
   """A softened scale-mixture of Laplace priors.
 
   Let S~InverseGamma(a, b); X_i |S=s ~[iid] Laplace(0, s).

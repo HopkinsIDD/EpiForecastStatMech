@@ -1,6 +1,7 @@
 # Lint as: python3
 """Functions for manipulating nested structures of arrays."""
 
+import functools
 from typing import Any, Union
 import jax
 import jax.numpy as jnp
@@ -52,10 +53,9 @@ def split_along_axis(
   """
   first_slice = slice_along_axis(inputs, axis, slice(0, split_idx))
   second_slice = slice_along_axis(inputs, axis, slice(split_idx, None))
-  squeeze_fn = jax.partial(jnp.squeeze, axis=axis)
+  squeeze_fn = functools.partial(jnp.squeeze, axis=axis)
   if post_squeeze_first:
     first_slice = jax.tree_map(squeeze_fn, first_slice)
   if post_squeeze_second:
     second_slice = jax.tree_map(squeeze_fn, second_slice)
   return first_slice, second_slice
-

@@ -12,7 +12,7 @@ import numpy as np
 import xarray
 
 import tensorflow_probability
-tfp = tensorflow_probability.experimental.substrates.jax
+tfp = tensorflow_probability.substrates.jax
 tfd = tfp.distributions
 
 from epi_forecast_stat_mech import data_model  # pylint: disable=g-bad-import-order
@@ -252,7 +252,7 @@ class StatMechEstimator(estimator_base.Estimator):
 
 
 def seven_day_time_smooth_helper_(x):
-  if "time" in x.dims:
+  if "time" in x.dims and not np.issubdtype(x.dtype, np.datetime64):
     return x.rolling(time=7, min_periods=4).mean()
   else:
     return x

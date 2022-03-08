@@ -3,11 +3,12 @@
 
 import abc
 import collections
-from typing import Callable, Union, Mapping, Text
 import dataclasses
-
+from typing import Callable, Mapping, Text, Union
 from epi_forecast_stat_mech import utils
-
+from epi_forecast_stat_mech.statistical_models import probability as stat_prob
+from flax.deprecated import nn
+import flax.deprecated.nn.initializers
 import jax
 import jax.numpy as jnp
 import jax.scipy.special
@@ -16,10 +17,6 @@ import numpy as np
 import tensorflow_probability as tfp
 tfp = tfp.experimental.substrates.jax
 tfd = tfp.distributions
-
-from epi_forecast_stat_mech.statistical_models import probability as stat_prob
-from flax import nn
-import flax.nn.initializers
 
 Array = Union[float, jnp.DeviceArray, np.ndarray]
 
@@ -1374,7 +1371,7 @@ class DynamicMultiplicativeGrowthModel(DynamicIntensityModel,
       log_beta_module = nn.Dense.partial(
           name="log_beta",
           features=1,
-          kernel_init=flax.nn.initializers.zeros,
+          kernel_init=flax.deprecated.nn.initializers.zeros,
           bias_init=constant_initializer(jnp.log(0.75)))
       log_K_module = ConstantModule.partial(
           name="log_K",
@@ -1408,7 +1405,7 @@ class DynamicGeneralizedMultiplicativeGrowthModel(DynamicIntensityModel,
       log_beta_module = nn.Dense.partial(
           name="log_beta",
           features=1,
-          kernel_init=flax.nn.initializers.zeros,
+          kernel_init=flax.deprecated.nn.initializers.zeros,
           bias_init=constant_initializer(jnp.log(0.75)))
       log_p_module = ConstantModule.partial(
           name="log_p",
@@ -1545,7 +1542,7 @@ class DynamicBaselineSEIRModel(DynamicIntensityModel,
       log_symptom_rate_module = nn.Dense.partial(
           name="log_symptom_rate",
           features=1,
-          kernel_init=flax.nn.initializers.zeros,
+          kernel_init=flax.deprecated.nn.initializers.zeros,
           bias_init=constant_initializer(jnp.log(0.3)))
       log_recovery_rate_module = ConstantModule.partial(
           name="log_recovery_rate", init=jnp.reshape(jnp.log(0.3), (1,)))

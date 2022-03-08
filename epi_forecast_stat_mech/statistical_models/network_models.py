@@ -1,13 +1,12 @@
 # Lint as: python3
 """Statistical models based on Neural Networks."""
-from typing import Any, Callable
 import dataclasses
-
+from typing import Any, Callable
 from epi_forecast_stat_mech.statistical_models import base
 from epi_forecast_stat_mech.statistical_models import probability as stat_prob
 from epi_forecast_stat_mech.statistical_models import tree_util
 
-from flax import nn
+from flax.deprecated import nn
 import jax
 import jax.numpy as jnp
 
@@ -64,7 +63,7 @@ class NormalDistributionModel(base.StatisticalModel):
   """Statistical model based on normal distribution.
 
   Attributes:
-    predict_module: flax.nn.Module that takes `inputs` and `output_size`
+    predict_module: flax.deprecated.nn.Module that takes `inputs` and `output_size`
       arguments and returns array of shape `[batch, output_size]` that will be
       used to predict locations of the gaussian distributed `observations` and
       possibly scales, depending on whether `error_model` is 'full'.

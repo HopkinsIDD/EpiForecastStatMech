@@ -103,7 +103,10 @@ class RtLiveEstimator(estimator_base.Estimator):
 
   def fit(self, observations: xr.Dataset):
     data_model.validate_data_for_fit(observations)
-    sr = observations['new_infections'].to_pandas().T
+    sr = observations['new_infections']
+    # If you don't do this transpose before calling to_pandas(), the dimension
+    # name 'location' is sometimes mysteriously dropped on pandas conversion.
+    sr = sr.transpose('time', 'location').to_pandas()
     sr = self._prepare_cases(sr)
     self.posterior = self._get_posterior(sr)
     self.latest_k = sr.iloc[-1]
