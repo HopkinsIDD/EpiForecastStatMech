@@ -8,7 +8,7 @@ pytest-cov
 seaborn
 jax
 jaxlib
-flax
+flax==0.3.6
 dm-tree
 glmnet_py
 sklearn
